@@ -265,6 +265,15 @@ cargo build --release
 
 ---
 
+## AI-Assisted Development（AI による開発支援）
+
+本プロジェクトは、**Claude Code** および **Google Gemini** という 2 つの強力な AI アシスタントの支援を受けて開発されました。
+
+- **Claude Code**: 主に Rust のコード構造の設計、リファクタリング、および Windows 特有のシステムプログラミングの実装支援。
+- **Google Gemini**: プロジェクトの全体的なロードマップ策定、ドキュメントの整備、およびトラブルシューティングの壁打ち相手。
+
+---
+
 ## ライセンス
 
 Copyright (C) 2026 tadmaddad - Jawfish Lab
