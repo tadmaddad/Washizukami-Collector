@@ -173,8 +173,8 @@ tools\
 - MSYS2 + MinGW-w64（GNU リンカ）
 
 ```powershell
-git clone https://github.com/YourUsername/Washizukami.git
-cd Washizukami
+git clone https://github.com/tadmaddad/Washizukami-Collector.git
+cd Washizukami-Collector
 cargo build --release
 ```
 
