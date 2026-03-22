@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build washi.exe (static, x86_64-pc-windows-gnu)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (GNU)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable-x86_64-pc-windows-gnu
+          targets: x86_64-pc-windows-gnu
+
+      - name: Install MSYS2 / MinGW-w64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-binutils
+
+      - name: Add MinGW-w64 to PATH
+        run: echo "C:/msys64/mingw64/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Configure Cargo for CI (no local target-dir override)
+        # The .cargo/config.toml points target-dir to C:\Users\Tad\... which
+        # does not exist on CI. Override it here.
+        run: |
+          echo "[build]" >> $env:USERPROFILE/.cargo/config.toml
+          echo 'target-dir = "target"' >> $env:USERPROFILE/.cargo/config.toml
+
+      - name: Build (release, static)
+        env:
+          DLLTOOL: C:/msys64/mingw64/bin/dlltool.exe
+        run: cargo build --release --target x86_64-pc-windows-gnu
+
+      - name: Rename binary
+        run: |
+          $version = "${{ github.ref_name }}"
+          $asset   = "washi-${version}-x86_64-windows.exe"
+          Copy-Item "target/x86_64-pc-windows-gnu/release/washi.exe" $asset
+          echo "ASSET=$asset" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ASSET }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,14 @@
+- name: Security Event Log
+  category: EventLogs
+  target_path: "%SystemRoot%\\System32\\winevt\\Logs\\Security.evtx"
+  method: NTFS
+
+- name: System Event Log
+  category: EventLogs
+  target_path: "%SystemRoot%\\System32\\winevt\\Logs\\System.evtx"
+  method: NTFS
+
+- name: Application Event Log
+  category: EventLogs
+  target_path: "%SystemRoot%\\System32\\winevt\\Logs\\Application.evtx"
+  method: NTFS

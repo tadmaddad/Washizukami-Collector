@@ -1,0 +1,19 @@
+- name: SAM Registry Hive
+  category: Registry
+  target_path: "%SystemRoot%\\System32\\config\\SAM"
+  method: NTFS
+
+- name: SYSTEM Registry Hive
+  category: Registry
+  target_path: "%SystemRoot%\\System32\\config\\SYSTEM"
+  method: NTFS
+
+- name: SOFTWARE Registry Hive
+  category: Registry
+  target_path: "%SystemRoot%\\System32\\config\\SOFTWARE"
+  method: NTFS
+
+- name: User NTUSER.DAT
+  category: Registry
+  target_path: "%USERPROFILE%\\NTUSER.DAT"
+  method: NTFS

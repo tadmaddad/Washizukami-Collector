@@ -1,0 +1,19 @@
+# Rust build artifacts
+/target/
+
+# Output from forensic collection runs (never commit collected artifacts)
+output/
+*.dmp
+*.zip
+
+# External tools (binaries should not be committed)
+tools/
+
+# Cargo local config (machine-specific paths — use .cargo/config.toml.example as template)
+.cargo/config.toml
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

@@ -1,0 +1,14 @@
+- name: MFT
+  category: Filesystem
+  target_path: "%SystemDrive%\\$MFT"
+  method: NTFS
+
+- name: Prefetch Files
+  category: Filesystem
+  target_path: "%SystemRoot%\\Prefetch\\*.pf"
+  method: File
+
+- name: Recent LNK Files
+  category: Filesystem
+  target_path: "%USERPROFILE%\\AppData\\Roaming\\Microsoft\\Windows\\Recent\\*.lnk"
+  method: File

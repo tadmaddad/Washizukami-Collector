@@ -1,0 +1,29 @@
+# .cargo/config.toml.example
+#
+# このファイルをコピーして config.toml にリネームし、環境に合わせて編集してください。
+#   cp .cargo/config.toml.example .cargo/config.toml
+#
+# config.toml 自体は .gitignore により管理対象外です。
+
+# ---- GNU ツールチェーン（Windows）を使用する場合 ----
+# MSYS2 + MinGW-w64 をインストール後、以下のパスを環境に合わせて変更してください。
+# 参考: https://www.msys2.org/
+
+[target.x86_64-pc-windows-gnu]
+linker = "C:\\msys64\\mingw64\\bin\\gcc.exe"
+ar     = "C:\\msys64\\mingw64\\bin\\ar.exe"
+# libgcc を静的リンクし、libgcc_s_seh-1.dll への依存を除去します。
+rustflags = [
+    "-C", "link-args=-static-libgcc",
+]
+
+[env]
+# windows-rs が GNU ツールチェーンでインポートライブラリを生成するために使用します。
+DLLTOOL = "C:\\msys64\\mingw64\\bin\\dlltool.exe"
+
+# ---- ビルド出力先（任意） ----
+# デフォルト（target/）のままでよければこのセクションは不要です。
+# WDAC 等の都合でプロジェクト外に出力したい場合のみ設定してください。
+#
+# [build]
+# target-dir = "C:\\Users\\<YourName>\\cargo-target\\washizukami"
