@@ -3,9 +3,9 @@
   target_path: "%SystemRoot%\\System32\\config\\SAM"
   method: NTFS
 
-- name: SYSTEM Registry Hive
+- name: SECURITY Registry Hive
   category: Registry
-  target_path: "%SystemRoot%\\System32\\config\\SYSTEM"
+  target_path: "%SystemRoot%\\System32\\config\\SECURITY"
   method: NTFS
 
 - name: SOFTWARE Registry Hive
@@ -13,7 +13,22 @@
   target_path: "%SystemRoot%\\System32\\config\\SOFTWARE"
   method: NTFS
 
+- name: SYSTEM Registry Hive
+  category: Registry
+  target_path: "%SystemRoot%\\System32\\config\\SYSTEM"
+  method: NTFS
+
+- name: Amcache.hve
+  category: Registry
+  target_path: "%SystemRoot%\\AppCompat\\Programs\\Amcache.hve"
+  method: NTFS
+
 - name: User NTUSER.DAT
   category: Registry
   target_path: "%USERPROFILE%\\NTUSER.DAT"
+  method: NTFS
+
+- name: User UsrClass.dat
+  category: Registry
+  target_path: "%USERPROFILE%\\AppData\\Local\\Microsoft\\Windows\\UsrClass.dat"
   method: NTFS

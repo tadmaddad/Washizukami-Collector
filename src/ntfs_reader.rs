@@ -203,8 +203,12 @@ impl NtfsReader {
     /// accepted.  Drive-letter prefixes such as `C:\` are stripped
     /// automatically.
     ///
+    /// `stream` selects the named `$DATA` attribute to extract.
+    /// Pass `None` (or `Some("")`) for the unnamed default stream.
+    /// Pass `Some("$J")` to extract the `$J` alternate data stream, etc.
+    ///
     /// Returns the number of bytes written to `dest`.
-    pub fn extract_file(&mut self, ntfs_path: &Path, dest: &Path) -> Result<u64> {
+    pub fn extract_file(&mut self, ntfs_path: &Path, stream: Option<&str>, dest: &Path) -> Result<u64> {
         let components = path_components(ntfs_path);
         if components.is_empty() {
             bail!("ntfs_path is empty: {}", ntfs_path.display());
@@ -221,8 +225,15 @@ impl NtfsReader {
             .with_context(|| format!("cannot create output file '{}'", dest.display()))?;
         let mut writer = BufWriter::new(out);
 
-        let bytes = copy_data(&self.ntfs, &mut self.source, &file, &mut writer)
-            .with_context(|| format!("error extracting '{}'", ntfs_path.display()))?;
+        let stream_name = stream.unwrap_or("");
+        let bytes = copy_data(&self.ntfs, &mut self.source, &file, stream_name, &mut writer)
+            .with_context(|| {
+                if stream_name.is_empty() {
+                    format!("error extracting '{}'", ntfs_path.display())
+                } else {
+                    format!("error extracting '{}' (stream: {})", ntfs_path.display(), stream_name)
+                }
+            })?;
 
         Ok(bytes)
     }
@@ -239,7 +250,7 @@ impl NtfsReader {
         let file = traverse(&self.ntfs, &mut self.source, &components)?;
 
         let mut buf = Vec::new();
-        copy_data(&self.ntfs, &mut self.source, &file, &mut buf)
+        copy_data(&self.ntfs, &mut self.source, &file, "", &mut buf)
             .with_context(|| format!("error reading '{}'", ntfs_path.display()))?;
 
         Ok(buf)
@@ -291,7 +302,7 @@ where
     Ok(current)
 }
 
-/// Copy the unnamed `$DATA` stream of `file` into `writer` using a 64 KiB
+/// Copy the named `$DATA` stream of `file` into `writer` using a 64 KiB
 /// streaming buffer.  Returns the number of bytes written.
 ///
 /// Reading via the raw volume handle means Windows file locks on `file` are
@@ -300,6 +311,7 @@ fn copy_data<'n, T, W>(
     _ntfs: &'n Ntfs,
     source: &mut T,
     file: &NtfsFile<'n>,
+    stream_name: &str,
     writer: &mut W,
 ) -> Result<u64>
 where
@@ -307,8 +319,14 @@ where
     W: Write,
 {
     let data_item = file
-        .data(source, "")
-        .ok_or_else(|| anyhow::anyhow!("file has no $DATA attribute (sparse or directory?)"))?
+        .data(source, stream_name)
+        .ok_or_else(|| {
+            if stream_name.is_empty() {
+                anyhow::anyhow!("file has no $DATA attribute (sparse or directory?)")
+            } else {
+                anyhow::anyhow!("file has no '{}' alternate data stream", stream_name)
+            }
+        })?
         .context("error accessing $DATA attribute")?;
 
     let data_attribute = data_item

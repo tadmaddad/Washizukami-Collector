@@ -5,12 +5,17 @@
 //! the `artifacts/` directory at runtime.
 //!
 //! An optional `config.yaml` placed beside the executable lets operators
-//! filter which artifacts are collected without rebuilding the binary.
+//! add custom artifact definitions and/or filter which artifacts are
+//! collected without rebuilding the binary.
 //!
 //! Resolution order (highest priority first):
-//!   1. CLI `CollectionFilter` (Phase 5 — passed as `Some(&filter)`)
+//!   1. CLI `CollectionFilter` (passed as `Some(&filter)`)
 //!   2. `<exe_dir>/config.yaml`
 //!   3. Embedded defaults (all artifacts collected)
+//!
+//! Custom artifacts defined in `config.yaml` are merged with the embedded
+//! definitions before filtering.  If a custom entry shares a `name` with an
+//! embedded entry the custom definition takes precedence.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -20,13 +25,21 @@ use std::path::Path;
 
 const EMBEDDED_EVENTLOGS: &str = include_str!("../artifacts/windows_eventlogs.yaml");
 const EMBEDDED_REGISTRY: &str = include_str!("../artifacts/windows_registry.yaml");
+const EMBEDDED_NTFS: &str = include_str!("../artifacts/windows_ntfs.yaml");
 const EMBEDDED_FILESYSTEM: &str = include_str!("../artifacts/windows_filesystem.yaml");
+const EMBEDDED_WMI: &str = include_str!("../artifacts/windows_wmi.yaml");
+const EMBEDDED_SRUM: &str = include_str!("../artifacts/windows_srum.yaml");
+const EMBEDDED_WEB: &str = include_str!("../artifacts/windows_web.yaml");
 
 /// All embedded artifact YAML sources, in load order.
 static EMBEDDED_SOURCES: &[(&str, &str)] = &[
     ("windows_eventlogs.yaml", EMBEDDED_EVENTLOGS),
     ("windows_registry.yaml", EMBEDDED_REGISTRY),
+    ("windows_ntfs.yaml", EMBEDDED_NTFS),
     ("windows_filesystem.yaml", EMBEDDED_FILESYSTEM),
+    ("windows_wmi.yaml", EMBEDDED_WMI),
+    ("windows_srum.yaml", EMBEDDED_SRUM),
+    ("windows_web.yaml", EMBEDDED_WEB),
 ];
 
 // ── Core types ────────────────────────────────────────────────────────────────
@@ -51,13 +64,18 @@ pub struct ArtifactDefinition {
     pub target_path: String,
     /// Collection method to use for this artifact.
     pub method: CollectionMethod,
+    /// Optional NTFS Alternate Data Stream name (e.g. `"$SDS"`, `"$J"`).
+    /// When set, the named stream is read instead of the unnamed `$DATA` stream.
+    /// Only meaningful when `method` is `NTFS`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<String>,
 }
 
 // ── Filter type ───────────────────────────────────────────────────────────────
 
 /// Criteria for selecting which artifacts to collect.
 ///
-/// Used both by the external `config.yaml` and (in Phase 5) by CLI flags.
+/// Used both by the external `config.yaml` and by CLI flags.
 ///
 /// ### Filtering rules (applied in order)
 ///
@@ -68,19 +86,6 @@ pub struct ArtifactDefinition {
 ///    whitelist, so it can further restrict an explicit whitelist.
 ///
 /// An empty filter (both lists empty) is a no-op — all artifacts are kept.
-///
-/// ### `config.yaml` example
-///
-/// ```yaml
-/// # Collect only these artifacts:
-/// enabled_artifacts:
-///   - SAM Registry Hive
-///   - SYSTEM Registry Hive
-///
-/// # …but never collect anything in the EventLogs category:
-/// disabled_categories:
-///   - EventLogs
-/// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CollectionFilter {
     /// Artifact name whitelist.  Empty = no restriction.
@@ -90,6 +95,67 @@ pub struct CollectionFilter {
     /// Category blacklist.  Empty = no restriction.
     #[serde(default)]
     pub disabled_categories: Vec<String>,
+}
+
+/// Full contents of an external `config.yaml` file.
+///
+/// Combines a [`CollectionFilter`] (which artifacts to include/exclude) with
+/// an optional list of **custom artifact definitions** that extend or override
+/// the embedded defaults.
+///
+/// ### `config.yaml` example
+///
+/// ```yaml
+/// # ── フィルタ ──────────────────────────────────────────────────────────────
+///
+/// # このリストが空でない場合、ここに列挙した名前のアーティファクトのみ収集
+/// enabled_artifacts:
+///   - SAM Registry Hive
+///   - SYSTEM Registry Hive
+///
+/// # このカテゴリに属するアーティファクトをすべて除外
+/// disabled_categories:
+///   - FileSystem
+///
+/// # ── カスタムアーティファクト定義 ─────────────────────────────────────────
+///
+/// # 埋め込み定義にないアーティファクトを追加、または既存定義を上書き
+/// artifacts:
+///   - name: "Custom App Log"
+///     category: "Custom"
+///     target_path: "C:\\MyApp\\logs\\app.log"
+///     method: File
+///   - name: "Custom NTFS File"
+///     category: "Custom"
+///     target_path: "%SystemDrive%\\LockedFile.db"
+///     method: NTFS
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ExternalConfig {
+    /// Artifact name whitelist.  Empty = no restriction.
+    #[serde(default)]
+    pub enabled_artifacts: Vec<String>,
+
+    /// Category blacklist.  Empty = no restriction.
+    #[serde(default)]
+    pub disabled_categories: Vec<String>,
+
+    /// Custom artifact definitions to add to (or override) the embedded set.
+    #[serde(default)]
+    pub artifacts: Vec<ArtifactDefinition>,
+}
+
+impl ExternalConfig {
+    /// Extract the filter portion of this config.
+    pub fn into_filter(self) -> (CollectionFilter, Vec<ArtifactDefinition>) {
+        (
+            CollectionFilter {
+                enabled_artifacts: self.enabled_artifacts,
+                disabled_categories: self.disabled_categories,
+            },
+            self.artifacts,
+        )
+    }
 }
 
 impl CollectionFilter {
@@ -137,23 +203,33 @@ impl CollectionFilter {
 /// Steps:
 /// 1. Parse all embedded YAML definitions.
 /// 2. Load `<exe_dir>/config.yaml` if present.
-/// 3. Merge with `cli_filter` (CLI wins over `config.yaml`).
-/// 4. Return only artifacts that pass the combined filter.
-///
-/// Pass `cli_filter: None` before Phase 5 CLI is implemented.
+/// 3. Merge custom artifact definitions from `config.yaml` into the embedded
+///    set (custom entries with the same `name` override the embedded one).
+/// 4. Merge filters: `config.yaml` filter < `cli_filter` (CLI wins).
+/// 5. Return only artifacts that pass the combined filter.
 pub fn load_artifacts(
     exe_dir: &Path,
     cli_filter: Option<&CollectionFilter>,
 ) -> Result<Vec<ArtifactDefinition>> {
-    let defs = load_embedded()?;
+    let mut defs = load_embedded()?;
 
-    let file_filter = load_external_config(exe_dir)?;
+    let (file_filter, custom_defs) = match load_external_config(exe_dir)? {
+        Some(ext) => ext.into_filter(),
+        None => (CollectionFilter::default(), vec![]),
+    };
 
-    let effective = match (file_filter, cli_filter) {
-        (Some(f), Some(cli)) => f.merge_override(cli),
-        (Some(f), None) => f,
-        (None, Some(cli)) => cli.clone(),
-        (None, None) => CollectionFilter::default(),
+    // Merge custom definitions: override by name, then append new ones.
+    for custom in custom_defs {
+        if let Some(existing) = defs.iter_mut().find(|d| d.name.eq_ignore_ascii_case(&custom.name)) {
+            *existing = custom;
+        } else {
+            defs.push(custom);
+        }
+    }
+
+    let effective = match cli_filter {
+        Some(cli) => file_filter.merge_override(cli),
+        None => file_filter,
     };
 
     Ok(if effective.is_empty() {
@@ -214,9 +290,9 @@ fn load_embedded() -> Result<Vec<ArtifactDefinition>> {
     Ok(defs)
 }
 
-/// Read `<exe_dir>/config.yaml` and parse it as a `CollectionFilter`.
+/// Read `<exe_dir>/config.yaml` and parse it as an [`ExternalConfig`].
 /// Returns `None` if the file does not exist (not an error).
-fn load_external_config(exe_dir: &Path) -> Result<Option<CollectionFilter>> {
+fn load_external_config(exe_dir: &Path) -> Result<Option<ExternalConfig>> {
     let path = exe_dir.join("config.yaml");
     if !path.exists() {
         return Ok(None);
@@ -225,10 +301,10 @@ fn load_external_config(exe_dir: &Path) -> Result<Option<CollectionFilter>> {
     let contents = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read '{}'", path.display()))?;
 
-    let filter: CollectionFilter = serde_yaml::from_str(&contents)
-        .with_context(|| format!("failed to parse '{}' as CollectionFilter", path.display()))?;
+    let config: ExternalConfig = serde_yaml::from_str(&contents)
+        .with_context(|| format!("failed to parse '{}' as ExternalConfig", path.display()))?;
 
-    Ok(Some(filter))
+    Ok(Some(config))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -434,6 +510,100 @@ mod tests {
         let defs = load_artifacts(&tmp, Some(&cli)).unwrap();
         assert_eq!(defs.len(), 1);
         assert_eq!(defs[0].name, "SAM Registry Hive");
+
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    // ── Custom artifact definitions in config.yaml ────────────────────────────
+
+    #[test]
+    fn config_yaml_custom_artifact_is_added() {
+        let tmp = std::env::temp_dir().join("rust_cdir_config_test_custom_add");
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let yaml = r#"
+artifacts:
+  - name: "My Custom Log"
+    category: "Custom"
+    target_path: "C:\\MyApp\\app.log"
+    method: File
+"#;
+        std::fs::write(tmp.join("config.yaml"), yaml).unwrap();
+
+        let embedded_count = load_embedded().unwrap().len();
+        let defs = load_artifacts(&tmp, None).unwrap();
+        assert_eq!(defs.len(), embedded_count + 1);
+        assert!(defs.iter().any(|d| d.name == "My Custom Log"));
+
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn config_yaml_custom_artifact_overrides_embedded() {
+        let tmp = std::env::temp_dir().join("rust_cdir_config_test_custom_override");
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // Override "SAM Registry Hive" with a different path and method
+        let yaml = r#"
+artifacts:
+  - name: "SAM Registry Hive"
+    category: "Registry"
+    target_path: "D:\\CustomPath\\SAM"
+    method: File
+"#;
+        std::fs::write(tmp.join("config.yaml"), yaml).unwrap();
+
+        let embedded_count = load_embedded().unwrap().len();
+        let defs = load_artifacts(&tmp, None).unwrap();
+        // Total count stays the same — override, not addition
+        assert_eq!(defs.len(), embedded_count);
+        let sam = defs.iter().find(|d| d.name == "SAM Registry Hive").unwrap();
+        assert_eq!(sam.target_path, "D:\\CustomPath\\SAM");
+
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn config_yaml_custom_artifact_override_is_case_insensitive() {
+        let tmp = std::env::temp_dir().join("rust_cdir_config_test_custom_override_ci");
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let yaml = r#"
+artifacts:
+  - name: "sam registry hive"
+    category: "Registry"
+    target_path: "D:\\AltPath\\SAM"
+    method: File
+"#;
+        std::fs::write(tmp.join("config.yaml"), yaml).unwrap();
+
+        let embedded_count = load_embedded().unwrap().len();
+        let defs = load_artifacts(&tmp, None).unwrap();
+        assert_eq!(defs.len(), embedded_count);
+
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn config_yaml_custom_artifact_included_in_filter() {
+        let tmp = std::env::temp_dir().join("rust_cdir_config_test_custom_filter");
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // Add a custom artifact and whitelist only it
+        let yaml = r#"
+enabled_artifacts:
+  - "My App Log"
+artifacts:
+  - name: "My App Log"
+    category: "Custom"
+    target_path: "C:\\App\\app.log"
+    method: File
+"#;
+        std::fs::write(tmp.join("config.yaml"), yaml).unwrap();
+
+        let defs = load_artifacts(&tmp, None).unwrap();
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].name, "My App Log");
 
         std::fs::remove_dir_all(&tmp).unwrap();
     }

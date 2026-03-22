@@ -97,6 +97,32 @@ washi.exe --output D:\evidence\case001 --zip
 
 ---
 
+## 収集対象アーティファクト
+
+内蔵定義でカバーしているアーティファクトの一覧です。`config.yaml` でカスタム定義を追加することも可能です（詳細は「アーティファクト定義のカスタマイズ」を参照）。
+
+| カテゴリ | アーティファクト | 収集方式 |
+|---------|----------------|---------|
+| **EventLogs** | Security / System / Application Event Log | NTFS |
+| **Registry** | SAM / SECURITY / SOFTWARE / SYSTEM ハイブ | NTFS |
+| **Registry** | Amcache.hve | NTFS |
+| **Registry** | NTUSER.DAT / UsrClass.dat（現ユーザー） | NTFS |
+| **NTFS** | `$MFT`（Master File Table） | NTFS |
+| **NTFS** | `$SECURE:$SDS`（セキュリティ記述子ストリーム） | NTFS + ADS |
+| **NTFS** | `$UsnJrnl:$J`（USN ジャーナル） | NTFS + ADS |
+| **Filesystem** | プリフェッチファイル（`Prefetch\*.pf`） | File |
+| **Filesystem** | 最近使ったファイル（`Recent\*.lnk`） | File |
+| **WMI** | WMI リポジトリ（OBJECTS.DATA / INDEX.BTR / MAPPING*.MAP） | NTFS |
+| **SRUM** | SRUM データベース（SRUDB.dat） | NTFS |
+| **Web** | Chrome 履歴 | File |
+| **Web** | Firefox 履歴・Cookie（places.sqlite / cookies.sqlite） | File |
+| **Web** | IE / Edge WebCache（WebCacheV01.dat） | File |
+| **Web** | Edge 履歴 | File |
+
+> **NTFS + ADS:** Alternate Data Stream を MFT 直接読み取りで取得します。通常の API では読み出せないストリームにもアクセス可能です。
+
+---
+
 ## 出力構造
 
 ```
@@ -111,7 +137,17 @@ washi.exe --output D:\evidence\case001 --zip
 │       ├── Registry\
 │       │   ├── SAM
 │       │   └── ...
-│       └── FileSystem\
+│       ├── NTFS\
+│       │   ├── $MFT
+│       │   ├── $Secure_SDS     ← $SECURE:$SDS ストリーム
+│       │   └── $UsnJrnl_J      ← $UsnJrnl:$J ストリーム
+│       ├── Filesystem\
+│       │   └── ...
+│       ├── WMI\
+│       │   └── ...
+│       ├── SRUM\
+│       │   └── SRUDB.dat
+│       └── Web\
 │           └── ...
 └── output\HOSTNAME.zip         ← ZIP アーカイブ（--zip 指定時のみ）
 ```
@@ -130,20 +166,42 @@ washi.exe --output D:\evidence\case001 --zip
 
 ## アーティファクト定義のカスタマイズ
 
-内蔵定義は Windows イベントログ・レジストリハイブ・一般的なファイルシステムアーティファクトをカバーしています。収集対象を絞り込みたい場合は、`washi.exe` と同じフォルダに `config.yaml` を配置してください。
+内蔵定義は Windows イベントログ・レジストリハイブ・一般的なファイルシステムアーティファクトをカバーしています。`washi.exe` と同じフォルダに `config.yaml` を配置することで、収集対象の絞り込みや独自アーティファクトの追加ができます。
 
 ```yaml
 # config.yaml — washi.exe と同じフォルダに配置
-enabled:
+
+# ── フィルタ ──────────────────────────────────────────────────────────────────
+# このリストが空でない場合、ここに列挙した名前のアーティファクトのみ収集（大文字小文字不問）
+enabled_artifacts:
   - "SAM Registry Hive"
   - "Security Event Log"
   - "System Event Log"
 
+# このカテゴリに属するアーティファクトをすべて除外
 disabled_categories:
   - FileSystem
+
+# ── カスタムアーティファクト定義 ──────────────────────────────────────────────
+# 内蔵定義にないアーティファクトを追加する。
+# 内蔵定義と同じ name を指定した場合はカスタム定義が優先（上書き）される。
+artifacts:
+  - name: "Custom App Log"
+    category: "Custom"
+    target_path: "C:\\MyApp\\logs\\app.log"
+    method: File
+  - name: "Custom NTFS File"
+    category: "Custom"
+    target_path: "%SystemDrive%\\LockedFile.db"
+    method: NTFS
 ```
 
 **優先順位:** CLI フラグ > `config.yaml` > 内蔵デフォルト
+
+| `method` 値 | 動作 |
+|-------------|------|
+| `NTFS` | MFT を直接解析してロック中のファイルも取得 |
+| `File` | 通常の OS ファイルコピー |
 
 ---
 
@@ -178,6 +236,32 @@ cd Washizukami-Collector
 cargo build --release
 ```
 
+
+---
+
+## ロードマップ
+
+現在計画中・検討中の機能拡張です。実装順は未定です。
+
+### YARA ルール連携
+
+収集フェーズに YARA スキャンを統合し、ルールにマッチしたファイルを自動収集する機能を予定しています。
+
+- アーティファクト定義に `yara_rules` フィールドを追加し、スキャン対象パスとルールファイルを紐付け
+- マッチしたファイルのみを選択的に収集することで、大量ファイルからの絞り込みを実現
+- 既存の NTFS Raw Read と組み合わせ、ロック中ファイルへのスキャンにも対応予定
+- インシデント対応時の IoC（Indicator of Compromise）マッチングや、マルウェア痕跡の自動抽出などへの活用を想定
+
+### メールクライアントアーティファクト
+
+メールクライアントのデータファイルを収集対象に追加する予定です。
+
+| クライアント | 対象ファイル |
+|-------------|------------|
+| **Microsoft Outlook** | `.ost` / `.pst` データファイル、添付ファイルキャッシュ |
+| **Mozilla Thunderbird** | メールボックス（`*.msf` / `INBOX`）、アドレス帳、設定ファイル |
+
+メールデータはサイズが大きくなりがちなため、収集対象期間の絞り込みや差分収集などの最適化も合わせて検討しています。
 
 ---
 

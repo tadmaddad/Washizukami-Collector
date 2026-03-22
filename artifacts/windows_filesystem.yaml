@@ -1,8 +1,3 @@
-- name: MFT
-  category: Filesystem
-  target_path: "%SystemDrive%\\$MFT"
-  method: NTFS
-
 - name: Prefetch Files
   category: Filesystem
   target_path: "%SystemRoot%\\Prefetch\\*.pf"

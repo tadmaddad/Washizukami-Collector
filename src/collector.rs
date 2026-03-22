@@ -134,10 +134,55 @@ impl Collector for RawCollector {
         ensure_parent(dest)?;
 
         let bytes = reader
-            .extract_file(&relative, dest)
+            .extract_file(&relative, None, dest)
             .with_context(|| format!("NTFS extract failed for '{}'", source.display()))?;
 
         // Hash the written output (single additional pass; keeps NtfsReader API unchanged).
+        let sha256 = sha256_of_file(dest)?;
+
+        Ok(CollectionResult {
+            source_path: source.to_owned(),
+            dest_path: dest.to_owned(),
+            bytes_copied: bytes,
+            sha256,
+            method_used: CollectionMethod::NTFS,
+            fell_back: false,
+            status: CollectionStatus::Success,
+        })
+    }
+}
+
+impl RawCollector {
+    /// Extract a named Alternate Data Stream via NTFS raw read.
+    ///
+    /// Used for `$SECURE:$SDS`, `$UsnJrnl:$J`, and any other ADS artifacts.
+    /// There is no `File`-method fallback for ADS — they are only reachable
+    /// through the raw NTFS path.
+    pub fn collect_with_stream(
+        &mut self,
+        source: &Path,
+        stream: &str,
+        dest: &Path,
+    ) -> Result<CollectionResult> {
+        let (volume, relative) = extract_volume(source)?;
+
+        let reader = match self.readers.entry(volume.clone()) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                let r = NtfsReader::open(&volume)
+                    .with_context(|| format!("cannot open NTFS volume '{volume}'"))?;
+                e.insert(r)
+            }
+        };
+
+        ensure_parent(dest)?;
+
+        let bytes = reader
+            .extract_file(&relative, Some(stream), dest)
+            .with_context(|| {
+                format!("NTFS stream extract failed for '{}:{}'", source.display(), stream)
+            })?;
+
         let sha256 = sha256_of_file(dest)?;
 
         Ok(CollectionResult {
@@ -170,7 +215,14 @@ pub fn collect_artifact(
     output_base: &Path,
     raw_collector: &mut RawCollector,
 ) -> CollectionResult {
-    let dest = build_dest_path(output_base, &def.category, source_path);
+    let dest = build_dest(output_base, &def.category, source_path, def.stream.as_deref());
+
+    // Alternate Data Stream artifacts can only be read via NTFS raw access.
+    if let Some(stream) = &def.stream {
+        return raw_collector
+            .collect_with_stream(source_path, stream, &dest)
+            .unwrap_or_else(|e| into_failed_result(source_path, &dest, CollectionMethod::NTFS, e));
+    }
 
     match def.method {
         CollectionMethod::NTFS => raw_collector
@@ -220,6 +272,33 @@ pub fn build_dest_path(output_base: &Path, category: &str, source_path: &Path) -
         .collect();
 
     output_base.join(category).join(relative)
+}
+
+/// Build the destination path, appending the stream name suffix when the
+/// artifact targets an Alternate Data Stream.
+///
+/// `C:\$Extend\$UsnJrnl` with stream `"$J"`
+/// → `output/HOST/NTFS/$Extend/$UsnJrnl_J`
+fn build_dest(
+    output_base: &Path,
+    category: &str,
+    source_path: &Path,
+    stream: Option<&str>,
+) -> PathBuf {
+    if let Some(s) = stream {
+        let base = source_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        // Strip leading '$' from stream name to keep the suffix readable
+        // while remaining a valid Windows filename component.
+        let suffix = s.trim_start_matches('$');
+        let new_name = format!("{}_{}", base, suffix);
+        let modified = source_path.with_file_name(new_name);
+        build_dest_path(output_base, category, &modified)
+    } else {
+        build_dest_path(output_base, category, source_path)
+    }
 }
 
 /// Split a Windows absolute path into `(volume_string, relative_path)`.

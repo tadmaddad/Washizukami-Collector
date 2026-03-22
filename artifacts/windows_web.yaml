@@ -1,0 +1,24 @@
+- name: Chrome History
+  category: Web
+  target_path: "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\History"
+  method: File
+
+- name: Firefox places.sqlite
+  category: Web
+  target_path: "%APPDATA%\\Mozilla\\Firefox\\Profiles\\*\\places.sqlite"
+  method: File
+
+- name: Firefox cookies.sqlite
+  category: Web
+  target_path: "%APPDATA%\\Mozilla\\Firefox\\Profiles\\*\\cookies.sqlite"
+  method: File
+
+- name: "IE/Edge WebCacheV01.dat"
+  category: Web
+  target_path: "%LOCALAPPDATA%\\Microsoft\\Windows\\WebCache\\WebCacheV01.dat"
+  method: File
+
+- name: Edge History
+  category: Web
+  target_path: "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\History"
+  method: File

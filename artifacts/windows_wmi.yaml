@@ -1,0 +1,14 @@
+- name: WMI Repository OBJECTS.DATA
+  category: WMI
+  target_path: "%SystemRoot%\\System32\\wbem\\Repository\\OBJECTS.DATA"
+  method: NTFS
+
+- name: WMI Repository INDEX.BTR
+  category: WMI
+  target_path: "%SystemRoot%\\System32\\wbem\\Repository\\INDEX.BTR"
+  method: NTFS
+
+- name: WMI Repository MAPPING Files
+  category: WMI
+  target_path: "%SystemRoot%\\System32\\wbem\\Repository\\MAPPING*.MAP"
+  method: NTFS

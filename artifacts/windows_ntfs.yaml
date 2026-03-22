@@ -1,0 +1,16 @@
+- name: $MFT
+  category: NTFS
+  target_path: "%SystemDrive%\\$MFT"
+  method: NTFS
+
+- name: "$SECURE:$SDS"
+  category: NTFS
+  target_path: "%SystemDrive%\\$Secure"
+  method: NTFS
+  stream: "$SDS"
+
+- name: "$UsnJrnl:$J"
+  category: NTFS
+  target_path: "%SystemDrive%\\$Extend\\$UsnJrnl"
+  method: NTFS
+  stream: "$J"

@@ -1,0 +1,4 @@
+- name: SRUM Database
+  category: SRUM
+  target_path: "%SystemRoot%\\System32\\sru\\SRUDB.dat"
+  method: NTFS
