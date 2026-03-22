@@ -183,9 +183,9 @@ cargo build --release
 
 ## ライセンス
 
-Copyright (C) 2026 Washizukami Contributors
+Copyright (C) 2026 tadmaddad - Jawfish Lab
 
-本ソフトウェアは [GNU Affero General Public License v3.0](LICENSE)（AGPL-3.0）の条件のもとで配布されるフリーソフトウェアです。
+本ソフトウェアは、GNU Affero General Public License v3.0（AGPL-3.0）に基づき、オープンソースとして公開されています。
 
 ---
 
