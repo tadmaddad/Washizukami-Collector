@@ -4,6 +4,28 @@
 /// - `%VAR%` style environment variable references (Windows convention)
 /// - `$VAR` and `${VAR}` style environment variable references (Unix convention)
 /// - `*` and `**` glob wildcards via the `glob` crate
+///
+/// ## Multi-user wildcard patterns
+///
+/// Use `*` as a single-level directory wildcard to collect artifacts across all
+/// user profiles, for example:
+///
+/// ```text
+/// C:\Users\*\NTUSER.DAT
+/// C:\Users\*\AppData\Local\Microsoft\Windows\UsrClass.dat
+/// ```
+///
+/// Each matching path is returned as a separate entry.  Because
+/// `collector::build_dest_path` preserves the full path structure beneath the
+/// drive letter, each file lands in a unique destination:
+///
+/// ```text
+/// output/HOST/Registry/Users/Alice/NTUSER.DAT
+/// output/HOST/Registry/Users/Bob/NTUSER.DAT
+/// ```
+///
+/// No extra handling is needed in the caller — just pass the wildcard path to
+/// `resolve_path` and iterate the results.
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
@@ -99,6 +121,15 @@ pub fn expand_env_vars(path: &str) -> String {
 ///   (existence is not checked — the collector will handle missing files).
 /// - If it contains glob metacharacters (`*`, `?`, `[`), the glob is expanded
 ///   and only paths that actually exist on the filesystem are returned.
+///
+/// ### Glob semantics
+///
+/// - `*` matches any sequence of characters **within a single path component**
+///   (it will not cross a directory separator).  Use `**` for recursive descent.
+/// - Matching is **case-insensitive** so that patterns work correctly on NTFS
+///   regardless of how the filename was originally cased.
+/// - Backslashes are normalised to forward slashes before matching so that
+///   Windows-style paths (e.g. `C:\Users\*\NTUSER.DAT`) are handled uniformly.
 pub fn resolve_path(raw_path: &str) -> Result<Vec<PathBuf>> {
     let expanded = expand_env_vars(raw_path);
 
@@ -108,8 +139,22 @@ pub fn resolve_path(raw_path: &str) -> Result<Vec<PathBuf>> {
         return Ok(vec![PathBuf::from(expanded)]);
     }
 
+    // Normalise Windows backslashes to forward slashes so the glob engine
+    // treats them as path separators rather than escape characters.
+    let pattern = expanded.replace('\\', "/");
+
+    let opts = glob::MatchOptions {
+        // NTFS is case-insensitive; honour that in pattern matching.
+        case_sensitive: false,
+        // Prevent `*` from crossing a directory boundary.
+        // Use `**` explicitly when recursive descent is intended.
+        require_literal_separator: true,
+        // Allow `*` to match names that begin with `.` (e.g. `.bash_history`).
+        require_literal_leading_dot: false,
+    };
+
     let mut results = Vec::new();
-    for entry in glob::glob(&expanded)
+    for entry in glob::glob_with(&pattern, opts)
         .with_context(|| format!("invalid glob pattern: {expanded}"))?
     {
         match entry {
@@ -166,11 +211,12 @@ mod tests {
     #[test]
     fn glob_expands_existing_paths() {
         // Use a dedicated subdirectory so parallel tests cannot interfere.
-        let tmp = std::env::temp_dir().join("rust_cdir_glob_test");
+        let tmp = std::env::temp_dir().join("washi_glob_test");
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(tmp.join("a.txt"), b"a").unwrap();
         std::fs::write(tmp.join("b.txt"), b"b").unwrap();
 
+        // Verify both backslash-style (Windows) and forward-slash patterns work.
         let pattern = format!("{}\\*.txt", tmp.to_string_lossy());
         let paths = resolve_path(&pattern).unwrap();
 
@@ -178,6 +224,53 @@ mod tests {
         for p in &paths {
             assert!(p.exists(), "glob returned non-existent path: {}", p.display());
         }
+
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    /// Simulate collecting NTUSER.DAT from multiple "user profile" directories,
+    /// mirroring the real `C:\Users\*\NTUSER.DAT` pattern.
+    #[test]
+    fn glob_multi_user_profile_pattern() {
+        let tmp = std::env::temp_dir().join("washi_users_test");
+
+        // Create two fake user profile directories, each with NTUSER.DAT.
+        let alice = tmp.join("Alice");
+        let bob = tmp.join("Bob");
+        std::fs::create_dir_all(&alice).unwrap();
+        std::fs::create_dir_all(&bob).unwrap();
+        std::fs::write(alice.join("NTUSER.DAT"), b"alice").unwrap();
+        std::fs::write(bob.join("NTUSER.DAT"), b"bob").unwrap();
+        // A file at the wrong depth should NOT be matched.
+        std::fs::write(tmp.join("NTUSER.DAT"), b"root").unwrap();
+
+        let pattern = format!("{}\\*\\NTUSER.DAT", tmp.to_string_lossy());
+        let mut paths = resolve_path(&pattern).unwrap();
+        paths.sort();
+
+        assert_eq!(paths.len(), 2, "should match exactly Alice and Bob, not the root-level file");
+        assert!(paths.iter().any(|p| p.ends_with("Alice\\NTUSER.DAT") || p.ends_with("Alice/NTUSER.DAT")));
+        assert!(paths.iter().any(|p| p.ends_with("Bob\\NTUSER.DAT") || p.ends_with("Bob/NTUSER.DAT")));
+
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    /// `*` must not cross a directory separator (require_literal_separator=true).
+    #[test]
+    fn glob_star_does_not_cross_separator() {
+        let tmp = std::env::temp_dir().join("washi_sep_test");
+        let nested = tmp.join("a").join("b");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("file.txt"), b"x").unwrap();
+
+        // `*` should NOT descend into `a/b/file.txt` — only `**` would do that.
+        let pattern = format!("{}\\*\\file.txt", tmp.to_string_lossy());
+        let paths = resolve_path(&pattern).unwrap();
+        assert!(
+            paths.is_empty(),
+            "`*` should not match two levels deep: {:?}",
+            paths
+        );
 
         std::fs::remove_dir_all(&tmp).unwrap();
     }

@@ -5,5 +5,5 @@
 
 - name: Recent LNK Files
   category: Filesystem
-  target_path: "%USERPROFILE%\\AppData\\Roaming\\Microsoft\\Windows\\Recent\\*.lnk"
+  target_path: "C:\\Users\\*\\AppData\\Roaming\\Microsoft\\Windows\\Recent\\*.lnk"
   method: File

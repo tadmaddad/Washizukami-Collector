@@ -25,10 +25,10 @@
 
 - name: User NTUSER.DAT
   category: Registry
-  target_path: "%USERPROFILE%\\NTUSER.DAT"
+  target_path: "C:\\Users\\*\\NTUSER.DAT"
   method: NTFS
 
 - name: User UsrClass.dat
   category: Registry
-  target_path: "%USERPROFILE%\\AppData\\Local\\Microsoft\\Windows\\UsrClass.dat"
+  target_path: "C:\\Users\\*\\AppData\\Local\\Microsoft\\Windows\\UsrClass.dat"
   method: NTFS

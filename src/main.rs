@@ -217,6 +217,8 @@ fn main() -> Result<()> {
 
 fn run_dry(definitions: &[config::ArtifactDefinition]) {
     let mut total_paths: usize = 0;
+    let mut total_bytes: u64 = 0;
+    let mut unknown_size_count: usize = 0;
 
     for def in definitions {
         let resolved = match path_resolver::resolve_path(&def.target_path) {
@@ -234,9 +236,21 @@ fn run_dry(definitions: &[config::ArtifactDefinition]) {
             );
         } else {
             for path in &resolved {
+                let size_str = match std::fs::metadata(path) {
+                    Ok(m) => {
+                        let bytes = m.len();
+                        total_bytes += bytes;
+                        format_size(bytes)
+                    }
+                    Err(_) => {
+                        unknown_size_count += 1;
+                        "?".to_owned()
+                    }
+                };
                 println!(
-                    "  [WOULD COLLECT] [{:>10}] {} — {}",
+                    "  [WOULD COLLECT] [{:>10}] {:>10}  {} — {}",
                     def.category,
+                    size_str,
                     def.name,
                     path.display()
                 );
@@ -251,6 +265,47 @@ fn run_dry(definitions: &[config::ArtifactDefinition]) {
         definitions.len(),
         total_paths,
     );
+
+    // Size summary — only shown when at least one size was measured.
+    if total_bytes > 0 || unknown_size_count > 0 {
+        let unknown_note = if unknown_size_count > 0 {
+            format!(" (+{unknown_size_count} unknown)")
+        } else {
+            String::new()
+        };
+        println!(
+            "[*] Estimated raw size  : {}{}",
+            format_size(total_bytes),
+            unknown_note
+        );
+        // ZIP deflate compression on forensic artifacts typically achieves
+        // 60–70 % reduction for registry hives / event logs.  Use a
+        // conservative 50 % estimate as a lower-bound indicator.
+        let zip_low  = total_bytes / 3;       // ~67 % reduction (optimistic)
+        let zip_high = total_bytes / 2;       // ~50 % reduction (conservative)
+        println!(
+            "[*] Estimated ZIP size  : {} – {} (50–67 % compression assumed)",
+            format_size(zip_low),
+            format_size(zip_high),
+        );
+    }
+}
+
+/// Format a byte count as a human-readable string (B / KB / MB / GB).
+fn format_size(bytes: u64) -> String {
+    const KB: u64 = 1_024;
+    const MB: u64 = 1_024 * KB;
+    const GB: u64 = 1_024 * MB;
+
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{bytes} B")
+    }
 }
 
 // ── ZIP archive ───────────────────────────────────────────────────────────────
