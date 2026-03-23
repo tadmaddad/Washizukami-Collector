@@ -106,7 +106,7 @@ washi.exe --output D:\evidence\case001 --zip
 | **EventLogs** | Security / System / Application Event Log | NTFS |
 | **Registry** | SAM / SECURITY / SOFTWARE / SYSTEM ハイブ | NTFS |
 | **Registry** | Amcache.hve | NTFS |
-| **Registry** | NTUSER.DAT / UsrClass.dat（現ユーザー） | NTFS |
+| **Registry** | NTUSER.DAT / UsrClass.dat（全ユーザー） | NTFS |
 | **NTFS** | `$MFT`（Master File Table） | NTFS |
 | **NTFS** | `$SECURE:$SDS`（セキュリティ記述子ストリーム） | NTFS + ADS |
 | **NTFS** | `$UsnJrnl:$J`（USN ジャーナル） | NTFS + ADS |
