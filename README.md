@@ -35,6 +35,7 @@ OS がファイルをロックしている状況下でも、NTFS の Master File
 | **ZIP 出力** | 収集完了後にすべての成果物を単一 ZIP に圧縮して搬出を容易に |
 | **メモリ取得連携** | `--mem` オプションで [WinPmem](https://github.com/Velocidex/WinPmem) と連携してメモリダンプを取得 |
 | **Dry-Run モード** | ファイルシステムに触れずに収集対象パスのみを確認 |
+| **YARA スキャン** | `scan` サブコマンドで永続化メカニズムを YARA-X でスキャン、検知ファイルを `infected.zip` に収集 |
 
 ---
 
@@ -54,6 +55,8 @@ OS がファイルをロックしている状況下でも、NTFS の Master File
 
 ## 使い方
 
+### アーティファクト収集モード（デフォルト）
+
 ```
 washi.exe [OPTIONS]
 
@@ -69,6 +72,24 @@ Options:
   -h, --help
   -V, --version
 ```
+
+### YARA スキャンモード
+
+```
+washi.exe scan [OPTIONS] --rules <FILE> --output <DIR>
+
+Options:
+      --yara-path <PATH>           YARA-X エンジン（yr.exe）のパス [デフォルト: ./tools/yr.exe]
+      --rules <FILE>               YARA ルールファイルのパス（必須）
+      --output <DIR>               スキャン結果の出力先（必須）
+  -h, --help
+```
+
+スキャン対象は以下の永続化メカニズムから自動収集されます：
+
+- `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
+- `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
+- `C:\Windows\System32\Tasks`（タスクスケジューラ XML）
 
 ### 実行例
 
@@ -93,6 +114,9 @@ washi.exe --dry-run
 
 # 出力先を指定
 washi.exe --output D:\evidence\case001 --zip
+
+# YARA スキャン（永続化パスをスキャンし、検知ファイルを infected.zip に収集）
+washi.exe scan --rules C:\rules\malware.yar --output C:\scan_out
 ```
 
 ---
@@ -160,6 +184,11 @@ washi.exe --output D:\evidence\case001 --zip
 [2026-03-21T10:30:02+0900] [FAIL ] [-           ] C:\path\locked — <error>
 [2026-03-21T10:30:03+0900] [TOOL ] [winpmem_x64 ] Starting: tools\winpmem_x64.exe -> output\HOSTNAME\memory.dmp
 [2026-03-21T10:30:10+0900] [INFO ] [-           ] Complete — OK: 141  Skipped: 1  Failed: 0
+
+# washi.exe scan 実行時
+[2026-03-23T11:00:00+0900] [SCAN ] [yr          ] Starting scan — engine: ./tools/yr.exe  rules: malware.yar  targets: 59
+[2026-03-23T11:00:02+0900] [MATCH] [yara        ] C:\Windows\System32\notepad.exe — test_notepad
+[2026-03-23T11:00:02+0900] [SCAN ] [-           ] Complete — matched: 1  archive: scan_out\infected.zip
 ```
 
 ---
@@ -243,14 +272,13 @@ cargo build --release
 
 現在計画中・検討中の機能拡張です。実装順は未定です。
 
-### YARA ルール連携
+### YARA スキャンの拡張
 
-収集フェーズに YARA スキャンを統合し、ルールにマッチしたファイルを自動収集する機能を予定しています。
+`scan` サブコマンドは v0.4.0 で実装済みです。今後の拡張として以下を検討しています。
 
-- アーティファクト定義に `yara_rules` フィールドを追加し、スキャン対象パスとルールファイルを紐付け
-- マッチしたファイルのみを選択的に収集することで、大量ファイルからの絞り込みを実現
-- 既存の NTFS Raw Read と組み合わせ、ロック中ファイルへのスキャンにも対応予定
-- インシデント対応時の IoC（Indicator of Compromise）マッチングや、マルウェア痕跡の自動抽出などへの活用を想定
+- `--target` オプションによる任意ディレクトリの追加スキャン
+- `infected.zip` へのパスワード保護（AES-256）— 現在はビルド環境の制約により未実装
+- スキャン対象の拡張（スタートアップフォルダ、サービス登録パスなど）
 
 ### メールクライアントアーティファクト
 
