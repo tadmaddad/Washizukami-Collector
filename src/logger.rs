@@ -113,6 +113,47 @@ impl AuditLogger {
         self.write_line(&line);
     }
 
+    /// Log the start of a YARA scan.
+    pub fn log_scan_start(&mut self, yara_path: &Path, rules: &Path, target_count: usize) {
+        let line = format!(
+            "{} [SCAN ] [{:<12}] Starting scan — engine: {}  rules: {}  targets: {}",
+            timestamp(),
+            tool_name(yara_path),
+            yara_path.display(),
+            rules.display(),
+            target_count,
+        );
+        self.write_line(&line);
+    }
+
+    /// Log a single YARA rule match.
+    pub fn log_scan_match(&mut self, path: &std::path::Path, rules: &[String]) {
+        let line = format!(
+            "{} [MATCH] [{:<12}] {} — {}",
+            timestamp(),
+            "yara",
+            path.display(),
+            rules.join(", "),
+        );
+        self.write_line(&line);
+    }
+
+    /// Log the scan summary (matches found, archive path).
+    pub fn log_scan_summary(&mut self, matched: usize, archive: Option<&Path>) {
+        let archive_note = match archive {
+            Some(p) => format!("  archive: {}", p.display()),
+            None => String::new(),
+        };
+        let line = format!(
+            "{} [SCAN ] [{:<12}] Complete — matched: {}{}",
+            timestamp(),
+            "-",
+            matched,
+            archive_note,
+        );
+        self.write_line(&line);
+    }
+
     /// Log the start of an external tool invocation.
     pub fn log_tool_start(&mut self, tool: &Path, output: &Path) {
         let name = tool_name(tool);

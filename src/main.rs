@@ -5,9 +5,10 @@ mod logger;
 mod ntfs_reader;
 mod path_resolver;
 mod privileges;
+mod scan;
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use collector::{collect_artifact, CollectionStatus, RawCollector};
 use config::CollectionFilter;
 use std::io::Write;
@@ -23,6 +24,9 @@ use std::path::{Path, PathBuf};
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     /// Output directory.
     /// Defaults to <exe_dir>/output/<COMPUTERNAME>.
     #[arg(short, long, value_name = "DIR")]
@@ -60,10 +64,34 @@ struct Cli {
     mem: bool,
 }
 
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Scan collected artifacts with a YARA engine.
+    Scan {
+        /// Path to the YARA engine executable.
+        #[arg(long, value_name = "PATH", default_value = "./tools/yr.exe")]
+        yara_path: PathBuf,
+
+        /// Path to the YARA rules file to use for scanning.
+        #[arg(long, value_name = "FILE")]
+        rules: PathBuf,
+
+        /// Directory where scan results will be written.
+        #[arg(long, value_name = "DIR")]
+        output: PathBuf,
+    },
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // ── Subcommand dispatch ───────────────────────────────────────────────────
+    if let Some(Commands::Scan { yara_path, rules, output }) = cli.command {
+        scan::run_scan(scan::ScanArgs { yara_path, rules, output });
+        return Ok(());
+    }
 
     // ── Pre-flight checks ────────────────────────────────────────────────────
     privileges::require_elevation()?;
