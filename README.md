@@ -1,6 +1,15 @@
+<div align="center">
+ <p>
+    <img alt="Washizukami Logo" src="Logo.png" width="60%">
+ </p>
+ [ <b>English</b> ] | [<a href="README-Japanese.md">日本語</a>]
+</div>
+
+---
+
 # Washizukami (鷲掴)
 
-> **Windows 向けフォレンジック証拠収集ツール**
+> **Windows Forensic Evidence Collection Tool**
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Built with Rust](https://img.shields.io/badge/Built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
@@ -8,153 +17,153 @@
 
 ---
 
-## 概要
+## Overview
 
-**Washizukami（鷲掴）** は、Rust で実装された Windows 向けのファストフォレンジック証拠収集ツールです。
+**Washizukami (鷲掴)** is a fast forensic evidence collection tool for Windows, implemented in Rust.
 
-OS がファイルをロックしている状況下でも、NTFS の Master File Table (MFT) を直接解析することで、レジストリハイブやイベントログなどのアーティファクトを取得できます。収集した証拠は SHA-256 ハッシュ付きの監査ログとともに保存されるため、そのまま各種解析ツールへの入力として利用できます。
+Even when the OS has files locked, it can acquire artifacts such as registry hives and event logs by directly parsing the NTFS Master File Table (MFT). Collected evidence is saved alongside an audit log containing SHA-256 hashes, making it ready to feed directly into various analysis tools.
 
-このツールは、[CDIR-C](https://github.com/CyberDefenseInstitute/CDIR)（サイバーディフェンス研究所）に着想を得て開発しました。CDIR-C が切り拓いたライブシステムからのアーティファクト収集という手法を、Rust による実装でポータブルな単一バイナリとして提供することを目指しています。
+This tool was inspired by [CDIR-C](https://github.com/CyberDefenseInstitute/CDIR) (Cyber Defense Institute). It aims to deliver the live-system artifact collection approach pioneered by CDIR-C as a portable single binary through a Rust implementation.
 
-**想定する解析ツールの例:**
-- [Hayabusa](https://github.com/Yamato-Security/hayabusa) — Windows イベントログの脅威ハンティング
-- [Velociraptor](https://github.com/Velocidex/velociraptor) / [KAPE](https://www.kroll.com/en/services/cyber-risk/incident-response-litigation-support/kroll-artifact-parser-extractor-kape) などのフォレンジックフレームワーク
-- ELK Stack / Splunk などの SIEM への取り込み
-
----
-
-## 機能
-
-| 機能 | 説明 |
-|------|------|
-| **NTFS Raw Read** | MFT を直接解析し、OS のファイルロックをバイパスして収集 |
-| **SHA-256 整合性検証** | 収集したファイルをすべてハッシュ化し、改ざん検知を可能に |
-| **監査ログ** | タイムスタンプ・収集方法・SHA-256 を含む構造化ログ (`collection.log`) |
-| **単一バイナリ** | アーティファクト定義をコンパイル時に内蔵 — 実行時に外部ファイル不要 |
-| **柔軟なフィルタリング** | CLI フラグまたは `config.yaml` で収集対象を名前・カテゴリ単位で制御 |
-| **ZIP 出力** | 収集完了後にすべての成果物を単一 ZIP に圧縮して搬出を容易に |
-| **メモリ取得連携** | `--mem` オプションで [WinPmem](https://github.com/Velocidex/WinPmem) と連携してメモリダンプを取得 |
-| **Dry-Run モード** | ファイルシステムに触れずに収集対象パスのみを確認 |
-| **YARA スキャン** | `scan` サブコマンドで永続化メカニズムを YARA-X でスキャン、検知ファイルを `infected.zip` に収集 |
+**Example analysis tools it pairs with:**
+- [Hayabusa](https://github.com/Yamato-Security/hayabusa) — Threat hunting for Windows event logs
+- [Velociraptor](https://github.com/Velocidex/velociraptor) / [KAPE](https://www.kroll.com/en/services/cyber-risk/incident-response-litigation-support/kroll-artifact-parser-extractor-kape) and other forensic frameworks
+- Ingestion into SIEMs such as ELK Stack / Splunk
 
 ---
 
-## 動作環境
+## Features
 
-| 項目 | 要件 |
-|------|------|
-| **OS** | Windows 10 / Windows 11（x64） |
-| **権限** | **管理者権限**（Administrator）で実行すること |
-| **ランタイム** | 不要（静的ビルド済み — VC++ 再頒布可能パッケージ・MinGW DLL は不要） |
-| **ディスク空き容量** | 収集するアーティファクトの合計サイズ以上 |
-| **メモリ取得オプション** | `--mem` 使用時は `tools\` フォルダに `winpmem*.exe` を配置すること |
-
-> **注意:** NTFS Raw Read を使用するため、対象ボリュームが NTFS フォーマットであることが前提です。FAT32/exFAT ボリューム上のファイルは通常の File コレクタで収集されます。
+| Feature | Description |
+|---------|-------------|
+| **NTFS Raw Read** | Directly parses the MFT to bypass OS file locks during collection |
+| **SHA-256 Integrity Verification** | Hashes all collected files to enable tamper detection |
+| **Audit Log** | Structured log (`collection.log`) containing timestamps, collection method, and SHA-256 hashes |
+| **Single Binary** | Artifact definitions are embedded at compile time — no external files needed at runtime |
+| **Flexible Filtering** | Control collection targets by name or category via CLI flags or `config.yaml` |
+| **ZIP Output** | Compresses all collected artifacts into a single ZIP after collection for easy exfiltration |
+| **Memory Acquisition Integration** | `--mem` option integrates with [WinPmem](https://github.com/Velocidex/WinPmem) to capture memory dumps |
+| **Dry-Run Mode** | Verify collection target paths without touching the filesystem |
+| **YARA Scanning** | `scan` subcommand scans persistence mechanisms with YARA-X, collecting detected files into `infected.zip` |
 
 ---
 
-## 使い方
+## Requirements
 
-### アーティファクト収集モード（デフォルト）
+| Item | Requirement |
+|------|-------------|
+| **OS** | Windows 10 / Windows 11 (x64) |
+| **Privileges** | Must be run with **Administrator** privileges |
+| **Runtime** | Not required (statically built — no VC++ Redistributable or MinGW DLLs needed) |
+| **Disk Space** | At least equal to the total size of artifacts to be collected |
+| **Memory Acquisition Option** | When using `--mem`, place `winpmem*.exe` in the `tools\` folder |
+
+> **Note:** Because NTFS Raw Read is used, the target volume must be NTFS-formatted. Files on FAT32/exFAT volumes are collected using the standard File collector.
+
+---
+
+## Usage
+
+### Artifact Collection Mode (Default)
 
 ```
 washi.exe [OPTIONS]
 
 Options:
-  -o, --output <DIR>               出力先ディレクトリ
-                                   [デフォルト: <実行ファイルのフォルダ>\output\<COMPUTERNAME>]
-  -a, --artifact <NAME>            収集対象を名前で指定（大文字小文字不問、複数指定可）
-  -x, --exclude-category <CAT>     除外するカテゴリ（複数指定可）
-      --dry-run                    パス解決結果のみ表示（ファイルは収集しない）
-      --zip                        収集完了後に ZIP アーカイブを生成
-      --mem                        tools\winpmem*.exe でメモリダンプを取得（収集前に実行）
-      --volume <LETTER>            NTFS Raw Read のドライブレターを上書き
+  -o, --output <DIR>               Output directory
+                                   [Default: <executable folder>\output\<COMPUTERNAME>]
+  -a, --artifact <NAME>            Specify collection targets by name (case-insensitive, multiple allowed)
+  -x, --exclude-category <CAT>     Exclude categories (multiple allowed)
+      --dry-run                    Display path resolution results only (no files are collected)
+      --zip                        Generate a ZIP archive after collection
+      --mem                        Capture memory dump with tools\winpmem*.exe (runs before collection)
+      --volume <LETTER>            Override the drive letter for NTFS Raw Read
   -h, --help
   -V, --version
 ```
 
-### YARA スキャンモード
+### YARA Scan Mode
 
 ```
 washi.exe scan [OPTIONS] --rules <FILE> --output <DIR>
 
 Options:
-      --yara-path <PATH>           YARA-X エンジン（yr.exe）のパス [デフォルト: ./tools/yr.exe]
-      --rules <FILE>               YARA ルールファイルのパス（必須）
-      --output <DIR>               スキャン結果の出力先（必須）
+      --yara-path <PATH>           Path to YARA-X engine (yr.exe) [Default: ./tools/yr.exe]
+      --rules <FILE>               Path to YARA rules file (required)
+      --output <DIR>               Output directory for scan results (required)
   -h, --help
 ```
 
-スキャン対象は以下の永続化メカニズムから自動収集されます：
+Scan targets are automatically collected from the following persistence mechanisms:
 
 - `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
 - `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
-- `C:\Windows\System32\Tasks`（タスクスケジューラ XML）
+- `C:\Windows\System32\Tasks` (Task Scheduler XML)
 
-### 実行例
+### Examples
 
 ```powershell
-# 全アーティファクトを収集（監査ログ付き）
+# Collect all artifacts (with audit log)
 washi.exe
 
-# 収集後に ZIP アーカイブを生成
+# Generate a ZIP archive after collection
 washi.exe --zip
 
-# メモリダンプ取得 → 全アーティファクト収集 → ZIP 生成
+# Capture memory dump → Collect all artifacts → Generate ZIP
 washi.exe --mem --zip
 
-# レジストリのみ収集（EventLogs と FileSystem を除外）
+# Collect registry only (exclude EventLogs and FileSystem)
 washi.exe --exclude-category EventLogs --exclude-category FileSystem
 
-# 特定アーティファクトを名前で指定して収集
+# Collect specific artifacts by name
 washi.exe --artifact "SAM Registry Hive" --artifact "Security Event Log"
 
-# 収集対象の確認（ファイルは書き込まない）
+# Verify collection targets (no files are written)
 washi.exe --dry-run
 
-# 出力先を指定
+# Specify output directory
 washi.exe --output D:\evidence\case001 --zip
 
-# YARA スキャン（永続化パスをスキャンし、検知ファイルを infected.zip に収集）
+# YARA scan (scan persistence paths and collect detected files into infected.zip)
 washi.exe scan --rules C:\rules\malware.yar --output C:\scan_out
 ```
 
 ---
 
-## 収集対象アーティファクト
+## Collected Artifacts
 
-内蔵定義でカバーしているアーティファクトの一覧です。`config.yaml` でカスタム定義を追加することも可能です（詳細は「アーティファクト定義のカスタマイズ」を参照）。
+Below is the list of artifacts covered by the built-in definitions. You can also add custom definitions via `config.yaml` (see "Customizing Artifact Definitions" for details).
 
-| カテゴリ | アーティファクト | 収集方式 |
-|---------|----------------|---------|
+| Category | Artifact | Collection Method |
+|----------|----------|-------------------|
 | **EventLogs** | Security / System / Application Event Log | NTFS |
-| **Registry** | SAM / SECURITY / SOFTWARE / SYSTEM ハイブ | NTFS |
+| **Registry** | SAM / SECURITY / SOFTWARE / SYSTEM hives | NTFS |
 | **Registry** | Amcache.hve | NTFS |
-| **Registry** | NTUSER.DAT / UsrClass.dat（全ユーザー） | NTFS |
-| **NTFS** | `$MFT`（Master File Table） | NTFS |
-| **NTFS** | `$SECURE:$SDS`（セキュリティ記述子ストリーム） | NTFS + ADS |
-| **NTFS** | `$UsnJrnl:$J`（USN ジャーナル） | NTFS + ADS |
-| **Filesystem** | プリフェッチファイル（`Prefetch\*.pf`） | File |
-| **Filesystem** | 最近使ったファイル（`Recent\*.lnk`） | File |
-| **WMI** | WMI リポジトリ（OBJECTS.DATA / INDEX.BTR / MAPPING*.MAP） | NTFS |
-| **SRUM** | SRUM データベース（SRUDB.dat） | NTFS |
-| **Web** | Chrome 履歴 | File |
-| **Web** | Firefox 履歴・Cookie（places.sqlite / cookies.sqlite） | File |
-| **Web** | IE / Edge WebCache（WebCacheV01.dat） | File |
-| **Web** | Edge 履歴 | File |
+| **Registry** | NTUSER.DAT / UsrClass.dat (all users) | NTFS |
+| **NTFS** | `$MFT` (Master File Table) | NTFS |
+| **NTFS** | `$SECURE:$SDS` (Security Descriptor Stream) | NTFS + ADS |
+| **NTFS** | `$UsnJrnl:$J` (USN Journal) | NTFS + ADS |
+| **Filesystem** | Prefetch files (`Prefetch\*.pf`) | File |
+| **Filesystem** | Recent files (`Recent\*.lnk`) | File |
+| **WMI** | WMI Repository (OBJECTS.DATA / INDEX.BTR / MAPPING*.MAP) | NTFS |
+| **SRUM** | SRUM Database (SRUDB.dat) | NTFS |
+| **Web** | Chrome History | File |
+| **Web** | Firefox History & Cookies (places.sqlite / cookies.sqlite) | File |
+| **Web** | IE / Edge WebCache (WebCacheV01.dat) | File |
+| **Web** | Edge History | File |
 
-> **NTFS + ADS:** Alternate Data Stream を MFT 直接読み取りで取得します。通常の API では読み出せないストリームにもアクセス可能です。
+> **NTFS + ADS:** Alternate Data Streams are acquired via direct MFT reads. This enables access to streams that cannot be read through normal APIs.
 
 ---
 
-## 出力構造
+## Output Structure
 
 ```
-<実行フォルダ>\
+<executable folder>\
 ├── output\
 │   └── HOSTNAME\
-│       ├── collection.log      ← 監査ログ（タイムスタンプ・SHA-256・収集方法）
-│       ├── memory.dmp          ← メモリダンプ（--mem 指定時のみ）
+│       ├── collection.log      ← Audit log (timestamps, SHA-256, collection method)
+│       ├── memory.dmp          ← Memory dump (only when --mem is specified)
 │       ├── EventLogs\
 │       │   ├── Security.evtx
 │       │   └── ...
@@ -163,8 +172,8 @@ washi.exe scan --rules C:\rules\malware.yar --output C:\scan_out
 │       │   └── ...
 │       ├── NTFS\
 │       │   ├── $MFT
-│       │   ├── $Secure_SDS     ← $SECURE:$SDS ストリーム
-│       │   └── $UsnJrnl_J      ← $UsnJrnl:$J ストリーム
+│       │   ├── $Secure_SDS     ← $SECURE:$SDS stream
+│       │   └── $UsnJrnl_J      ← $UsnJrnl:$J stream
 │       ├── Filesystem\
 │       │   └── ...
 │       ├── WMI\
@@ -173,10 +182,10 @@ washi.exe scan --rules C:\rules\malware.yar --output C:\scan_out
 │       │   └── SRUDB.dat
 │       └── Web\
 │           └── ...
-└── output\HOSTNAME.zip         ← ZIP アーカイブ（--zip 指定時のみ）
+└── output\HOSTNAME.zip         ← ZIP archive (only when --zip is specified)
 ```
 
-### 監査ログ形式
+### Audit Log Format
 
 ```
 [2026-03-21T10:30:00+0900] [OK   ] [NTFS        ] C:\Windows\System32\config\SAM -> output\HOSTNAME\Registry\SAM (262144 bytes, SHA256: abcd1234...)
@@ -185,7 +194,7 @@ washi.exe scan --rules C:\rules\malware.yar --output C:\scan_out
 [2026-03-21T10:30:03+0900] [TOOL ] [winpmem_x64 ] Starting: tools\winpmem_x64.exe -> output\HOSTNAME\memory.dmp
 [2026-03-21T10:30:10+0900] [INFO ] [-           ] Complete — OK: 141  Skipped: 1  Failed: 0
 
-# washi.exe scan 実行時
+# When running washi.exe scan
 [2026-03-23T11:00:00+0900] [SCAN ] [yr          ] Starting scan — engine: ./tools/yr.exe  rules: malware.yar  targets: 59
 [2026-03-23T11:00:02+0900] [MATCH] [yara        ] C:\Windows\System32\notepad.exe — test_notepad
 [2026-03-23T11:00:02+0900] [SCAN ] [-           ] Complete — matched: 1  archive: scan_out\infected.zip
@@ -193,27 +202,27 @@ washi.exe scan --rules C:\rules\malware.yar --output C:\scan_out
 
 ---
 
-## アーティファクト定義のカスタマイズ
+## Customizing Artifact Definitions
 
-内蔵定義は Windows イベントログ・レジストリハイブ・一般的なファイルシステムアーティファクトをカバーしています。`washi.exe` と同じフォルダに `config.yaml` を配置することで、収集対象の絞り込みや独自アーティファクトの追加ができます。
+The built-in definitions cover Windows event logs, registry hives, and common filesystem artifacts. By placing a `config.yaml` in the same folder as `washi.exe`, you can narrow collection targets or add custom artifacts.
 
 ```yaml
-# config.yaml — washi.exe と同じフォルダに配置
+# config.yaml — place in the same folder as washi.exe
 
-# ── フィルタ ──────────────────────────────────────────────────────────────────
-# このリストが空でない場合、ここに列挙した名前のアーティファクトのみ収集（大文字小文字不問）
+# ── Filters ──────────────────────────────────────────────────────────────────
+# If this list is non-empty, only the artifacts listed here will be collected (case-insensitive)
 enabled_artifacts:
   - "SAM Registry Hive"
   - "Security Event Log"
   - "System Event Log"
 
-# このカテゴリに属するアーティファクトをすべて除外
+# Exclude all artifacts belonging to these categories
 disabled_categories:
   - FileSystem
 
-# ── カスタムアーティファクト定義 ──────────────────────────────────────────────
-# 内蔵定義にないアーティファクトを追加する。
-# 内蔵定義と同じ name を指定した場合はカスタム定義が優先（上書き）される。
+# ── Custom Artifact Definitions ──────────────────────────────────────────────
+# Add artifacts not covered by the built-in definitions.
+# If a custom definition uses the same name as a built-in one, the custom definition takes priority (override).
 artifacts:
   - name: "Custom App Log"
     category: "Custom"
@@ -225,39 +234,39 @@ artifacts:
     method: NTFS
 ```
 
-**優先順位:** CLI フラグ > `config.yaml` > 内蔵デフォルト
+**Priority:** CLI flags > `config.yaml` > Built-in defaults
 
-| `method` 値 | 動作 |
-|-------------|------|
-| `NTFS` | MFT を直接解析してロック中のファイルも取得 |
-| `File` | 通常の OS ファイルコピー |
+| `method` Value | Behavior |
+|----------------|----------|
+| `NTFS` | Directly parses the MFT to acquire files even when locked |
+| `File` | Standard OS file copy |
 
 ---
 
-## メモリ取得（winpmem 連携）
+## Memory Acquisition (WinPmem Integration)
 
-`--mem` オプションを使用すると、アーティファクト収集の前に [WinPmem](https://github.com/Velocidex/WinPmem) でメモリダンプを取得できます。
+Using the `--mem` option, you can capture a memory dump with [WinPmem](https://github.com/Velocidex/WinPmem) before artifact collection begins.
 
-1. [WinPmem リリースページ](https://github.com/Velocidex/WinPmem/releases) から `winpmem_x64.exe` をダウンロード
-2. `washi.exe` と同じフォルダの `tools\` に配置
-3. `--mem` を付けて実行
+1. Download `winpmem_x64.exe` from the [WinPmem Releases page](https://github.com/Velocidex/WinPmem/releases)
+2. Place it in the `tools\` folder alongside `washi.exe`
+3. Run with the `--mem` flag
 
 ```
-（配置例）
+(Directory layout)
 washi.exe
 tools\
 └── winpmem_x64.exe
 ```
 
-> `tools\winpmem*.exe` が見つからない場合は警告をログに記録し、アーティファクト収集のみ続行します。
+> If `tools\winpmem*.exe` is not found, a warning is logged and artifact collection proceeds without memory acquisition.
 
 ---
 
-## ソースからのビルド
+## Building from Source
 
-**必要なもの:**
-- Rust stable ツールチェーン（`x86_64-pc-windows-gnu`）
-- MSYS2 + MinGW-w64（GNU リンカ）
+**Prerequisites:**
+- Rust stable toolchain (`x86_64-pc-windows-gnu`)
+- MSYS2 + MinGW-w64 (GNU linker)
 
 ```powershell
 git clone https://github.com/tadmaddad/Washizukami-Collector.git
@@ -265,64 +274,63 @@ cd Washizukami-Collector
 cargo build --release
 ```
 
+---
+
+## Roadmap
+
+The following feature enhancements are currently planned or under consideration. Implementation order is undecided.
+
+### YARA Scan Enhancements
+
+The `scan` subcommand was implemented in v0.4.0. The following enhancements are being considered:
+
+- `--target` option for scanning arbitrary directories
+- Password protection for `infected.zip` (AES-256) — currently unimplemented due to build environment constraints
+- Expanded scan targets (Startup folders, service registration paths, etc.)
+
+### Email Client Artifacts
+
+Email client data files are planned to be added as collection targets.
+
+| Client | Target Files |
+|--------|-------------|
+| **Microsoft Outlook** | `.ost` / `.pst` data files, attachment cache |
+| **Mozilla Thunderbird** | Mailboxes (`*.msf` / `INBOX`), address books, configuration files |
+
+Since email data tends to be large, optimizations such as date-range filtering and differential collection are also being considered.
 
 ---
 
-## ロードマップ
+## Origin of the Name: Why "Washizukami (鷲掴)"?
 
-現在計画中・検討中の機能拡張です。実装順は未定です。
+This tool is named out of deep respect for **[Hayabusa](https://github.com/Yamato-Security/hayabusa)**, the de facto standard for Windows log analysis and a favorite among security engineers.
 
-### YARA スキャンの拡張
+If the Hayabusa (Peregrine Falcon) — the king of the skies — spots its prey with razor-sharp eyes, then this tool physically "eagle-grabs" (鷲掴み) that prey (artifacts), overpowering even OS restrictions (file locks) to bring them back. The name embodies that commitment to powerful evidence collection.
 
-`scan` サブコマンドは v0.4.0 で実装済みです。今後の拡張として以下を検討しています。
+...That said, the above is the official (serious) explanation.
 
-- `--target` オプションによる任意ディレクトリの追加スキャン
-- `infected.zip` へのパスワード保護（AES-256）— 現在はビルド環境の制約により未実装
-- スキャン対象の拡張（スタートアップフォルダ、サービス登録パスなど）
-
-### メールクライアントアーティファクト
-
-メールクライアントのデータファイルを収集対象に追加する予定です。
-
-| クライアント | 対象ファイル |
-|-------------|------------|
-| **Microsoft Outlook** | `.ost` / `.pst` データファイル、添付ファイルキャッシュ |
-| **Mozilla Thunderbird** | メールボックス（`*.msf` / `INBOX`）、アドレス帳、設定ファイル |
-
-メールデータはサイズが大きくなりがちなため、収集対象期間の絞り込みや差分収集などの最適化も合わせて検討しています。
+We occasionally receive insinuations that "the author's personal preferences may be reflected in the naming," but this is categorically untrue. All we want is to hold NTFS MFT entries and registry hives — firmly, yet gently — through legally proper procedures.
 
 ---
 
-## 名前の由来：なぜ「鷲掴（Washizukami）」なのか？
+## AI-Assisted Development
 
-本ツールの名称は、Windows ログ解析のデファクトスタンダードであり、多くのセキュリティエンジニアが愛用する **[Hayabusa](https://github.com/Yamato-Security/hayabusa)** への深いリスペクトから命名されました。
+This project was developed with the assistance of two powerful AI assistants: **Claude Code** and **Google Gemini**.
 
-空の王者であるハヤブサが鋭い眼光で獲物を見つけ出すなら、このツールはその獲物（アーティファクト）を物理的に「鷲掴み」にして、OS の制限（ファイルロック）さえもねじ伏せて持ち帰る。そんな力強い証拠収集へのこだわりを込めています。
-
-…と、ここまでが公式の（真面目な）説明です。
-
-たまに「作者の個人的な嗜好が反映されているのでは？」という邪推をいただくことがありますが、断じて違います。私はただ、NTFS の MFT とレジストリハイブを、法的に正しい手続きで、優しく、かつ力強くホールドしたいだけなのです。
+- **Claude Code**: Primarily assisted with Rust code structure design, refactoring, and implementation guidance for Windows-specific system programming.
+- **Google Gemini**: Assisted with overall project roadmap planning, documentation, and served as a sounding board for troubleshooting.
 
 ---
 
-## AI-Assisted Development（AI による開発支援）
-
-本プロジェクトは、**Claude Code** および **Google Gemini** という 2 つの強力な AI アシスタントの支援を受けて開発されました。
-
-- **Claude Code**: 主に Rust のコード構造の設計、リファクタリング、および Windows 特有のシステムプログラミングの実装支援。
-- **Google Gemini**: プロジェクトの全体的なロードマップ策定、ドキュメントの整備、およびトラブルシューティングの壁打ち相手。
-
----
-
-## ライセンス
+## License
 
 Copyright (C) 2026 tadmaddad - Jawfish Lab
 
-本ソフトウェアは、GNU Affero General Public License v3.0（AGPL-3.0）に基づき、オープンソースとして公開されています。
+This software is released as open source under the GNU Affero General Public License v3.0 (AGPL-3.0).
 
 ---
 
-## 利用ライブラリ・ツール
+## Libraries & Tools Used
 
-- [ntfs](https://github.com/ColinFinck/ntfs) by Colin Finck — MFT 直接アクセスを可能にする Pure Rust NTFS パーサ
-- [WinPmem](https://github.com/Velocidex/WinPmem) by Velocidex — Windows メモリ取得ツール
+- [ntfs](https://github.com/ColinFinck/ntfs) by Colin Finck — Pure Rust NTFS parser enabling direct MFT access
+- [WinPmem](https://github.com/Velocidex/WinPmem) by Velocidex — Windows memory acquisition tool
