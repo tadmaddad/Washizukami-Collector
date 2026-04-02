@@ -1,6 +1,6 @@
 <div align="center">
  <p>
-    <img alt="Washizukami Logo" src="logo.png" width="60%">
+    <img alt="Washizukami Logo" src="Logo.png" width="60%">
  </p>
   [<a href="README.md">English</a>] | [<b>日本語</b>]
 </div>
