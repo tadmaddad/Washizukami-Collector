@@ -125,7 +125,7 @@ fn main() -> Result<()> {
     let definitions = config::load_artifacts(&exe_dir, cli_filter_opt)?;
 
     // ── Header ───────────────────────────────────────────────────────────────
-    println!("[*] Washizukami (鷲掴) forensic collector");
+    println!("[*] Washizukami forensic collector");
     println!("[*] Host        : {hostname}");
     if let Some(v) = cli.volume {
         println!("[*] Volume      : {v}: (override)");
