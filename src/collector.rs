@@ -133,12 +133,9 @@ impl Collector for RawCollector {
 
         ensure_parent(dest)?;
 
-        let bytes = reader
+        let (bytes, sha256) = reader
             .extract_file(&relative, None, dest)
             .with_context(|| format!("NTFS extract failed for '{}'", source.display()))?;
-
-        // Hash the written output (single additional pass; keeps NtfsReader API unchanged).
-        let sha256 = sha256_of_file(dest)?;
 
         Ok(CollectionResult {
             source_path: source.to_owned(),
@@ -177,13 +174,11 @@ impl RawCollector {
 
         ensure_parent(dest)?;
 
-        let bytes = reader
+        let (bytes, sha256) = reader
             .extract_file(&relative, Some(stream), dest)
             .with_context(|| {
                 format!("NTFS stream extract failed for '{}:{}'", source.display(), stream)
             })?;
-
-        let sha256 = sha256_of_file(dest)?;
 
         Ok(CollectionResult {
             source_path: source.to_owned(),
@@ -360,24 +355,6 @@ fn hash_and_copy<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> Result<(u
 
     let hex = hex_string(&hasher.finalize());
     Ok((total, hex))
-}
-
-/// Compute SHA-256 of an existing file (used after `RawCollector` writes it).
-fn sha256_of_file(path: &Path) -> Result<String> {
-    let mut f = File::open(path)
-        .with_context(|| format!("cannot open '{}' for hashing", path.display()))?;
-    let mut hasher = Sha256::new();
-    let mut buf = vec![0u8; 65_536];
-
-    loop {
-        let n = f.read(&mut buf).context("hash read error")?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-
-    Ok(hex_string(&hasher.finalize()))
 }
 
 /// Format a byte slice as a lowercase hexadecimal string.
