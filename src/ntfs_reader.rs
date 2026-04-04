@@ -237,24 +237,6 @@ impl NtfsReader {
 
         Ok(bytes)
     }
-
-    /// Read a locked/in-use file at `ntfs_path` fully into memory.
-    ///
-    /// Use [`extract_file`] for large files to avoid excessive memory usage.
-    pub fn read_to_vec(&mut self, ntfs_path: &Path) -> Result<Vec<u8>> {
-        let components = path_components(ntfs_path);
-        if components.is_empty() {
-            bail!("ntfs_path is empty: {}", ntfs_path.display());
-        }
-
-        let file = traverse(&self.ntfs, &mut self.source, &components)?;
-
-        let mut buf = Vec::new();
-        copy_data(&self.ntfs, &mut self.source, &file, "", &mut buf)
-            .with_context(|| format!("error reading '{}'", ntfs_path.display()))?;
-
-        Ok(buf)
-    }
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────

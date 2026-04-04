@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use collector::{collect_artifact, CollectionStatus, RawCollector};
 use config::CollectionFilter;
-use std::io::Write;
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
 // ── CLI definition ────────────────────────────────────────────────────────────
@@ -145,6 +145,13 @@ fn main() -> Result<()> {
         run_dry(&definitions);
         return Ok(());
     }
+
+    // ── Confirmation prompt ──────────────────────────────────────────────────
+    if !confirm_proceed("[?] Start collection? [y/N]: ") {
+        println!("[*] Aborted.");
+        return Ok(());
+    }
+    println!();
 
     // ── Open audit log ───────────────────────────────────────────────────────
     let mut audit = logger::AuditLogger::new(&output_base)?;
@@ -384,6 +391,18 @@ fn walkdir(dir: &Path) -> Result<Vec<PathBuf>> {
     collect_files(dir, &mut files)?;
     files.sort();
     Ok(files)
+}
+
+/// Print `prompt`, read one line from stdin, and return `true` only if the
+/// user typed `y` or `yes` (case-insensitive).  Returns `false` on I/O error.
+fn confirm_proceed(prompt: &str) -> bool {
+    print!("{prompt}");
+    let _ = std::io::stdout().flush();
+    let mut line = String::new();
+    if std::io::stdin().lock().read_line(&mut line).is_err() {
+        return false;
+    }
+    matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
 fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {

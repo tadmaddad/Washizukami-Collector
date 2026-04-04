@@ -43,6 +43,7 @@ OS がファイルをロックしている状況下でも、NTFS の Master File
 | **メモリ取得連携** | `--mem` オプションで [WinPmem](https://github.com/Velocidex/WinPmem) と連携してメモリダンプを取得 |
 | **Dry-Run モード** | ファイルシステムに触れずに収集対象パスのみを確認 |
 | **YARA スキャン** | `scan` サブコマンドで永続化メカニズムを YARA-X でスキャン、検知ファイルを `infected.zip` に収集 |
+| **確認プロンプト** | 収集・スキャン開始前に `[y/N]` で確認を求め、誤操作による意図しない収集を防止 |
 
 ---
 
@@ -97,6 +98,16 @@ Options:
 - `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
 - `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
 - `C:\Windows\System32\Tasks`（タスクスケジューラ XML）
+
+### 確認プロンプト
+
+収集モード・スキャンモードともに、処理開始前に確認を求めます。
+
+```
+[?] Start collection? [y/N]:
+```
+
+`y` または `yes`（大文字小文字不問）を入力すると処理を開始します。それ以外の入力・Enter のみ・Ctrl+C はすべてアボートとして扱われます。`--dry-run` では確認は不要です。
 
 ### 実行例
 
