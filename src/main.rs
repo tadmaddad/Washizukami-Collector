@@ -278,8 +278,9 @@ fn main() -> Result<()> {
                 }
 
                 CollectionStatus::Failed(reason) => {
-                    // Always surface failures regardless of verbosity.
-                    ui::print_fail(&def.category, &def.name, reason);
+                    if cli.verbose {
+                        ui::print_fail(&def.category, &def.name, reason);
+                    }
                     audit.log_fail(&result);
                     n_fail += 1;
                     cat_fail += 1;
