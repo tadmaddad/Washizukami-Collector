@@ -24,7 +24,7 @@ pub struct ScanMatch {
 
 /// Entry point for `washi.exe scan`.
 pub fn run_scan(args: ScanArgs) {
-    println!("[*] Washizukami (鷲掴) — YARA scan mode");
+    println!("[*] Washizukami — YARA scan mode");
     println!("[*] YARA engine : {}", args.yara_path.display());
     println!("[*] Rules       : {}", args.rules.display());
     println!("[*] Output      : {}", args.output.display());

@@ -215,40 +215,119 @@ washi.exe scan --rules C:\rules\malware.yar --output C:\scan_out
 
 内蔵定義は Windows イベントログ・レジストリハイブ・一般的なファイルシステムアーティファクトをカバーしています。`washi.exe` と同じフォルダに `config.yaml` を配置することで、収集対象の絞り込みや独自アーティファクトの追加ができます。
 
-```yaml
-# config.yaml — washi.exe と同じフォルダに配置
+**優先順位:** CLI フラグ > `config.yaml` > 内蔵デフォルト
 
+### フィルタ
+
+#### `enabled_artifacts`
+
+収集するアーティファクト名のホワイトリストです。空または省略した場合はすべて収集されます。大文字小文字は区別しません。
+
+<details>
+<summary>内蔵アーティファクト名一覧</summary>
+
+| カテゴリ | 名前 |
+|---------|------|
+| EventLogs | `Security Event Log` |
+| EventLogs | `System Event Log` |
+| EventLogs | `Application Event Log` |
+| Registry | `SAM Registry Hive` |
+| Registry | `SECURITY Registry Hive` |
+| Registry | `SOFTWARE Registry Hive` |
+| Registry | `SYSTEM Registry Hive` |
+| Registry | `Amcache.hve` |
+| Registry | `User NTUSER.DAT` |
+| Registry | `User UsrClass.dat` |
+| NTFS | `$MFT` |
+| NTFS | `$SECURE:$SDS` |
+| NTFS | `$UsnJrnl:$J` |
+| Filesystem | `Prefetch Files` |
+| Filesystem | `Recent LNK Files` |
+| WMI | `WMI Repository OBJECTS.DATA` |
+| WMI | `WMI Repository INDEX.BTR` |
+| WMI | `WMI Repository MAPPING Files` |
+| SRUM | `SRUM Database` |
+| Web | `Chrome History` |
+| Web | `Firefox places.sqlite` |
+| Web | `Firefox cookies.sqlite` |
+| Web | `IE/Edge WebCacheV01.dat` |
+| Web | `Edge History` |
+
+</details>
+
+#### `disabled_categories`
+
+カテゴリ単位で除外します。有効な値: `EventLogs` / `Registry` / `NTFS` / `Filesystem` / `WMI` / `SRUM` / `Web`（大文字小文字不問）。
+
+> **注意:** `disabled_categories` は `enabled_artifacts` より**後に**評価されます。ホワイトリストに明示したアーティファクトでも、カテゴリが無効化されていれば除外されます。
+
+### カスタムアーティファクト定義
+
+`artifacts` キーで内蔵定義にないアーティファクトを追加できます。内蔵定義と同じ `name` を指定した場合はカスタム定義が優先されます。
+
+必須フィールド:
+
+| フィールド | 説明 |
+|-----------|------|
+| `name` | 一意な表示名。`--artifact` や `enabled_artifacts` から参照されます。 |
+| `category` | グループ名。出力サブフォルダ名にも使用されます。 |
+| `target_path` | 収集対象パス。`%VAR%` 形式の環境変数とグロブワイルドカード（`*`・`?`）が使用可能。 |
+| `method` | `File`（通常の OS コピー）または `NTFS`（MFT 直接読み取り、ファイルロック回避）。 |
+
+### `config.yaml` の記述例
+
+```yaml
 # ── フィルタ ──────────────────────────────────────────────────────────────────
-# このリストが空でない場合、ここに列挙した名前のアーティファクトのみ収集（大文字小文字不問）
+# 以下のアーティファクトのみ収集（コメントアウトすると全件収集）
 enabled_artifacts:
   - "SAM Registry Hive"
   - "Security Event Log"
   - "System Event Log"
 
-# このカテゴリに属するアーティファクトをすべて除外
+# カテゴリ単位で除外
 disabled_categories:
-  - FileSystem
+  - Filesystem
+  - Web
 
 # ── カスタムアーティファクト定義 ──────────────────────────────────────────────
-# 内蔵定義にないアーティファクトを追加する。
-# 内蔵定義と同じ name を指定した場合はカスタム定義が優先（上書き）される。
 artifacts:
-  - name: "Custom App Log"
+  - name: "My Application Log"
     category: "Custom"
     target_path: "C:\\MyApp\\logs\\app.log"
     method: File
-  - name: "Custom NTFS File"
+
+  - name: "My Locked DB"
     category: "Custom"
-    target_path: "%SystemDrive%\\LockedFile.db"
+    target_path: "%SystemDrive%\\MyApp\\data\\app.db"
+    method: NTFS
+
+  - name: "All XML Configs"
+    category: "Custom"
+    target_path: "C:\\MyApp\\config\\*.xml"
+    method: File
+```
+
+### 応用例: Outlook .pst ファイルの収集
+
+Classic 版 Outlook（新しい Outlook アプリではなく旧来の Outlook）の `.pst` ファイルは、環境によって保存場所が異なります。**日本語 Windows かつ OneDrive 連携が有効な場合**、既定の保存先は以下のパスになります。
+
+```
+C:\Users\<ユーザー名>\OneDrive\ドキュメント\Outlook ファイル\*.pst
+```
+
+全ユーザー分をまとめて収集するには、`config.yaml` に以下を追加します。
+
+```yaml
+artifacts:
+  - name: "Outlook PST Files"
+    category: "Mail"
+    target_path: "C:\\Users\\*\\OneDrive\\ドキュメント\\Outlook ファイル\\*.pst"
     method: NTFS
 ```
 
-**優先順位:** CLI フラグ > `config.yaml` > 内蔵デフォルト
-
-| `method` 値 | 動作 |
-|-------------|------|
-| `NTFS` | MFT を直接解析してロック中のファイルも取得 |
-| `File` | 通常の OS ファイルコピー |
+> **`method: NTFS` を使う理由:** Classic 版 Outlook は起動中に `.pst` ファイルを排他ロックします。NTFS Raw Read を使うことでロックをバイパスし、Outlook を終了させることなく収集できます。
+>
+> **サイズに注意:** `.pst` ファイルは数 GB になる場合があります。収集前に `--dry-run` でファイルサイズを確認することをお勧めします。
 
 ---
 
@@ -300,11 +379,17 @@ cargo build --release
 
 ### メールクライアントアーティファクト
 
-メールクライアントのデータファイルを収集対象に追加する予定です。
+#### Microsoft Outlook `.pst` — config.yaml で今すぐ対応可能
+
+Classic 版 Outlook の `.pst` 収集は、カスタムアーティファクト定義を使って現在のバージョンでも対応できます。設定方法は「[応用例: Outlook .pst ファイルの収集](#応用例-outlook-pst-ファイルの収集)」を参照してください。
+
+#### 内蔵定義への追加（予定）
+
+以下は今後の内蔵定義追加として検討中です。
 
 | クライアント | 対象ファイル |
 |-------------|------------|
-| **Microsoft Outlook** | `.ost` / `.pst` データファイル、添付ファイルキャッシュ |
+| **Microsoft Outlook** | `.ost` ファイル、添付ファイルキャッシュ |
 | **Mozilla Thunderbird** | メールボックス（`*.msf` / `INBOX`）、アドレス帳、設定ファイル |
 
 メールデータはサイズが大きくなりがちなため、収集対象期間の絞り込みや差分収集などの最適化も合わせて検討しています。

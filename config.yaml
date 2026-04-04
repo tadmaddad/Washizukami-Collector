@@ -1,19 +1,19 @@
-# config.yaml — Washizukami (washi.exe) カスタム設定
+# config.yaml — Washizukami (washi.exe) custom configuration
 #
-# このファイルを washi.exe と同じフォルダに配置すると読み込まれます。
-# 配置しない場合は内蔵デフォルト定義がすべて収集されます。
+# Place this file in the same folder as washi.exe to have it loaded automatically.
+# If omitted, all built-in artifact definitions will be collected.
 #
-# 優先順位: CLI フラグ > config.yaml > 内蔵デフォルト
+# Priority: CLI flags > config.yaml > built-in defaults
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# セクション 1: フィルタ
+# Section 1: Filters
 # ─────────────────────────────────────────────────────────────────────────────
 #
-# enabled_artifacts — 収集するアーティファクト名をホワイトリストで指定。
-#   空または省略した場合はすべてのアーティファクトが対象になります。
-#   大文字小文字は区別しません。
+# enabled_artifacts — whitelist of artifact names to collect.
+#   If empty or omitted, all artifacts are collected.
+#   Matching is case-insensitive.
 #
-# 内蔵定義の名前一覧:
+# Built-in artifact names:
 #   [EventLogs]
 #     - Security Event Log
 #     - System Event Log
@@ -53,26 +53,27 @@
 #   - "SYSTEM Registry Hive"
 #   - "SOFTWARE Registry Hive"
 
-# disabled_categories — カテゴリ単位で除外。
-#   有効な値: EventLogs / Registry / NTFS / Filesystem / WMI / SRUM / Web（大文字小文字不問）
-#   enabled_artifacts よりも後に評価されるため、ホワイトリストで明示した
-#   アーティファクトもカテゴリが無効化されていれば除外されます。
+# disabled_categories — exclude entire categories from collection.
+#   Valid values: EventLogs / Registry / NTFS / Filesystem / WMI / SRUM / Web (case-insensitive)
+#   Evaluated after enabled_artifacts, so an artifact explicitly whitelisted will still
+#   be excluded if its category is disabled.
 
 # disabled_categories:
 #   - Filesystem
 
 # ─────────────────────────────────────────────────────────────────────────────
-# セクション 2: カスタムアーティファクト定義
+# Section 2: Custom artifact definitions
 # ─────────────────────────────────────────────────────────────────────────────
 #
-# artifacts — 内蔵定義にないアーティファクトを追加します。
-#   内蔵定義と同じ name を指定した場合は、カスタム定義が優先（上書き）されます。
+# artifacts — add artifacts not covered by the built-in definitions.
+#   If a custom entry shares the same name as a built-in one, the custom
+#   definition takes priority (override).
 #
-# 各エントリの必須フィールド:
-#   name        : 一意な表示名（CLIの --artifact や enabled_artifacts から参照可能）
-#   category    : グループ名（出力フォルダ名にも使用される）
-#   target_path : 収集対象パス。%VAR% 形式の環境変数とグロブ(*,?) が使用可能
-#   method      : File（通常コピー）または NTFS（MFT 直接読み取り、ロック回避）
+# Required fields per entry:
+#   name        : unique display name (referenced by --artifact and enabled_artifacts)
+#   category    : group name (also used as the output subfolder name)
+#   target_path : path to collect. Supports %VAR% environment variables and glob wildcards (* and ?)
+#   method      : File (standard OS copy) or NTFS (direct MFT read, bypasses file locks)
 
 # artifacts:
 #   - name: "My Application Log"
@@ -89,3 +90,25 @@
 #     category: "Custom"
 #     target_path: "C:\\MyApp\\config\\*.xml"
 #     method: File
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Example: Microsoft Outlook .pst files
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Conditions: Japanese Windows + Classic Outlook (not New Outlook) + OneDrive enabled
+#
+# When OneDrive is enabled, Classic Outlook stores .pst files under the
+# Japanese "Documents" folder name inside the OneDrive folder:
+#   C:\Users\<username>\OneDrive\ドキュメント\Outlook ファイル\*.pst
+#
+# method: NTFS is recommended because Outlook locks .pst files while running.
+# Direct MFT access bypasses the lock and allows collection without closing Outlook.
+#
+# Note: .pst files can be several GB in size.
+#       Use --dry-run first to check file sizes before collecting.
+
+# artifacts:
+#   - name: "Outlook PST Files"
+#     category: "Mail"
+#     target_path: "C:\\Users\\*\\OneDrive\\ドキュメント\\Outlook ファイル\\*.pst"
+#     method: NTFS

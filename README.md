@@ -217,40 +217,119 @@ Below is the list of artifacts covered by the built-in definitions. You can also
 
 The built-in definitions cover Windows event logs, registry hives, and common filesystem artifacts. By placing a `config.yaml` in the same folder as `washi.exe`, you can narrow collection targets or add custom artifacts.
 
-```yaml
-# config.yaml — place in the same folder as washi.exe
+**Priority:** CLI flags > `config.yaml` > built-in defaults
 
+### Filters
+
+#### `enabled_artifacts`
+
+Whitelist of artifact names to collect. If empty or omitted, all artifacts are collected. Matching is case-insensitive.
+
+<details>
+<summary>Built-in artifact names</summary>
+
+| Category | Name |
+|----------|------|
+| EventLogs | `Security Event Log` |
+| EventLogs | `System Event Log` |
+| EventLogs | `Application Event Log` |
+| Registry | `SAM Registry Hive` |
+| Registry | `SECURITY Registry Hive` |
+| Registry | `SOFTWARE Registry Hive` |
+| Registry | `SYSTEM Registry Hive` |
+| Registry | `Amcache.hve` |
+| Registry | `User NTUSER.DAT` |
+| Registry | `User UsrClass.dat` |
+| NTFS | `$MFT` |
+| NTFS | `$SECURE:$SDS` |
+| NTFS | `$UsnJrnl:$J` |
+| Filesystem | `Prefetch Files` |
+| Filesystem | `Recent LNK Files` |
+| WMI | `WMI Repository OBJECTS.DATA` |
+| WMI | `WMI Repository INDEX.BTR` |
+| WMI | `WMI Repository MAPPING Files` |
+| SRUM | `SRUM Database` |
+| Web | `Chrome History` |
+| Web | `Firefox places.sqlite` |
+| Web | `Firefox cookies.sqlite` |
+| Web | `IE/Edge WebCacheV01.dat` |
+| Web | `Edge History` |
+
+</details>
+
+#### `disabled_categories`
+
+Excludes entire categories from collection. Valid values: `EventLogs` / `Registry` / `NTFS` / `Filesystem` / `WMI` / `SRUM` / `Web` (case-insensitive).
+
+> **Note:** `disabled_categories` is evaluated **after** `enabled_artifacts`. An artifact explicitly listed in `enabled_artifacts` will still be excluded if its category appears in `disabled_categories`.
+
+### Custom Artifact Definitions
+
+Use the `artifacts` key to add artifacts not covered by the built-in definitions. If a custom entry shares the same `name` as a built-in artifact, the custom definition takes priority.
+
+Required fields:
+
+| Field | Description |
+|-------|-------------|
+| `name` | Unique display name. Referenced by `--artifact` and `enabled_artifacts`. |
+| `category` | Group name. Also used as the output subfolder name. |
+| `target_path` | Path to collect. Supports `%VAR%` environment variables and glob wildcards (`*` and `?`). |
+| `method` | `File` — standard OS copy. `NTFS` — direct MFT read, bypasses file locks. |
+
+### Example `config.yaml`
+
+```yaml
 # ── Filters ──────────────────────────────────────────────────────────────────
-# If this list is non-empty, only the artifacts listed here will be collected (case-insensitive)
+# Collect only these artifacts (comment out to collect all)
 enabled_artifacts:
   - "SAM Registry Hive"
   - "Security Event Log"
   - "System Event Log"
 
-# Exclude all artifacts belonging to these categories
+# Exclude entire categories
 disabled_categories:
-  - FileSystem
+  - Filesystem
+  - Web
 
-# ── Custom Artifact Definitions ──────────────────────────────────────────────
-# Add artifacts not covered by the built-in definitions.
-# If a custom definition uses the same name as a built-in one, the custom definition takes priority (override).
+# ── Custom artifact definitions ───────────────────────────────────────────────
 artifacts:
-  - name: "Custom App Log"
+  - name: "My Application Log"
     category: "Custom"
     target_path: "C:\\MyApp\\logs\\app.log"
     method: File
-  - name: "Custom NTFS File"
+
+  - name: "My Locked DB"
     category: "Custom"
-    target_path: "%SystemDrive%\\LockedFile.db"
+    target_path: "%SystemDrive%\\MyApp\\data\\app.db"
+    method: NTFS
+
+  - name: "All XML Configs"
+    category: "Custom"
+    target_path: "C:\\MyApp\\config\\*.xml"
+    method: File
+```
+
+### Recipe: Collecting Outlook .pst Files
+
+Classic Outlook (not the New Outlook app) stores `.pst` files in a location that varies by environment. On **Japanese Windows with OneDrive enabled**, the default path is:
+
+```
+C:\Users\<username>\OneDrive\ドキュメント\Outlook ファイル\*.pst
+```
+
+Add the following entry to `config.yaml` to collect `.pst` files across all user profiles:
+
+```yaml
+artifacts:
+  - name: "Outlook PST Files"
+    category: "Mail"
+    target_path: "C:\\Users\\*\\OneDrive\\ドキュメント\\Outlook ファイル\\*.pst"
     method: NTFS
 ```
 
-**Priority:** CLI flags > `config.yaml` > Built-in defaults
-
-| `method` Value | Behavior |
-|----------------|----------|
-| `NTFS` | Directly parses the MFT to acquire files even when locked |
-| `File` | Standard OS file copy |
+> **Why `method: NTFS`?** Classic Outlook holds an exclusive lock on `.pst` files while running. Using NTFS raw read bypasses the lock and allows collection without closing Outlook.
+>
+> **Size warning:** `.pst` files can be several GB. Run `--dry-run` first to check sizes before collecting.
 
 ---
 
@@ -301,11 +380,17 @@ The `scan` subcommand was implemented in v0.4.0. The following enhancements are 
 
 ### Email Client Artifacts
 
-Email client data files are planned to be added as collection targets.
+#### Microsoft Outlook `.pst` — available now via `config.yaml`
+
+Classic Outlook `.pst` collection is already supported through custom artifact definitions. See the [Recipe: Collecting Outlook .pst Files](#recipe-collecting-outlook-pst-files) section for configuration details.
+
+#### Planned built-in support
+
+The following are planned as future built-in definitions:
 
 | Client | Target Files |
 |--------|-------------|
-| **Microsoft Outlook** | `.ost` / `.pst` data files, attachment cache |
+| **Microsoft Outlook** | `.ost` files, attachment cache |
 | **Mozilla Thunderbird** | Mailboxes (`*.msf` / `INBOX`), address books, configuration files |
 
 Since email data tends to be large, optimizations such as date-range filtering and differential collection are also being considered.
