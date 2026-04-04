@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::io::{BufRead, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -24,29 +24,20 @@ pub struct ScanMatch {
 
 /// Entry point for `washi.exe scan`.
 pub fn run_scan(args: ScanArgs) {
-    println!("[*] Washizukami — YARA scan mode");
-    println!("[*] YARA engine : {}", args.yara_path.display());
-    println!("[*] Rules       : {}", args.rules.display());
-    println!("[*] Output      : {}", args.output.display());
-    println!();
+    crate::ui::print_scan_header(&args.yara_path, &args.rules, &args.output);
 
     // ── Confirmation prompt ───────────────────────────────────────────────────
-    print!("[?] Start YARA scan? [y/N]: ");
-    let _ = std::io::stdout().flush();
-    let mut line = String::new();
-    if std::io::stdin().lock().read_line(&mut line).is_err()
-        || !matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
-    {
-        println!("[*] Aborted.");
+    if !crate::ui::confirm("Start YARA scan? [y/N]:") {
+        crate::ui::print_info("Aborted.");
         return;
     }
     println!();
 
     // ── Collect targets ───────────────────────────────────────────────────────
-    println!("[*] Collecting persistence targets...");
+    crate::ui::print_info("Collecting persistence targets…");
     let targets = collect_persistence_targets();
     if targets.is_empty() {
-        println!("[*] No persistence targets found.");
+        crate::ui::print_info("No persistence targets found.");
         return;
     }
 
@@ -55,59 +46,59 @@ pub fn run_scan(args: ScanArgs) {
         targets.iter().partition(|p| p.is_absolute());
 
     for path in &skipped {
-        println!("[SKIP] Not an absolute path: {}", path.display());
+        crate::ui::print_warn(&format!("Not an absolute path: {}", path.display()));
     }
 
     if scannable.is_empty() {
-        println!("[*] No scannable targets after filtering.");
+        crate::ui::print_info("No scannable targets after filtering.");
         return;
     }
-    println!("[*] {} target(s) to scan", scannable.len());
+    crate::ui::print_info(&format!("{} target(s) to scan", scannable.len()));
 
     // ── Open audit log ────────────────────────────────────────────────────────
     if let Err(e) = std::fs::create_dir_all(&args.output) {
-        eprintln!("[FAIL] Cannot create output directory: {e}");
+        crate::ui::print_warn(&format!("Cannot create output directory: {e}"));
         return;
     }
     let mut audit = match crate::logger::AuditLogger::new(&args.output) {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("[FAIL] Cannot open audit log: {e:#}");
+            crate::ui::print_warn(&format!("Cannot open audit log: {e:#}"));
             return;
         }
     };
-    println!("[*] Audit log   : {}", args.output.join("collection.log").display());
+    crate::ui::print_info(&format!(
+        "Audit log: {}",
+        args.output.join("collection.log").display()
+    ));
 
     // ── YARA scan ─────────────────────────────────────────────────────────────
-    println!("[*] Running YARA scan...");
+    crate::ui::print_info("Running YARA scan…");
     audit.log_scan_start(&args.yara_path, &args.rules, scannable.len());
 
     let matches = run_yara_scan(&args.yara_path, &args.rules, &scannable);
 
-    if matches.is_empty() {
-        println!("[*] No matches found.");
-        audit.log_scan_summary(0, None);
-        return;
-    }
-
-    println!("[!] {} file(s) matched:", matches.len());
     for m in &matches {
-        println!("    [MATCH] {} — {}", m.path.display(), m.rules.join(", "));
+        crate::ui::print_scan_match(&m.path, &m.rules);
         audit.log_scan_match(&m.path, &m.rules);
     }
 
     // ── Archive matched files ─────────────────────────────────────────────────
     let zip_path = args.output.join("infected.zip");
-    match create_infected_zip(&zip_path, &matches) {
-        Ok(()) => {
-            println!("[*] Archived to : {}", zip_path.display());
-            audit.log_scan_summary(matches.len(), Some(&zip_path));
+    let zip_result = if matches.is_empty() {
+        None
+    } else {
+        match create_infected_zip(&zip_path, &matches) {
+            Ok(()) => Some(zip_path.as_path()),
+            Err(e) => {
+                crate::ui::print_warn(&format!("infected.zip: {e:#}"));
+                None
+            }
         }
-        Err(e) => {
-            eprintln!("[FAIL] infected.zip: {e:#}");
-            audit.log_scan_summary(matches.len(), None);
-        }
-    }
+    };
+
+    crate::ui::print_scan_summary(scannable.len(), matches.len(), zip_result);
+    audit.log_scan_summary(matches.len(), zip_result);
 }
 
 // ── Persistence target collection ─────────────────────────────────────────────

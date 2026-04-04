@@ -6,12 +6,13 @@ mod ntfs_reader;
 mod path_resolver;
 mod privileges;
 mod scan;
+mod ui;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use collector::{collect_artifact, CollectionStatus, RawCollector};
 use config::CollectionFilter;
-use std::io::{BufRead, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 // ── CLI definition ────────────────────────────────────────────────────────────
@@ -85,6 +86,8 @@ enum Commands {
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 fn main() -> Result<()> {
+    ui::init();
+
     let cli = Cli::parse();
 
     // ── Subcommand dispatch ───────────────────────────────────────────────────
@@ -125,20 +128,14 @@ fn main() -> Result<()> {
     let definitions = config::load_artifacts(&exe_dir, cli_filter_opt)?;
 
     // ── Header ───────────────────────────────────────────────────────────────
-    println!("[*] Washizukami forensic collector");
-    println!("[*] Host        : {hostname}");
-    if let Some(v) = cli.volume {
-        println!("[*] Volume      : {v}: (override)");
-    }
-    if cli.dry_run {
-        println!("[*] Mode        : DRY RUN (no files will be copied)");
-    }
-    println!("[*] Artifacts   : {}", definitions.len());
-    if !cli.dry_run {
-        println!("[*] Output base : {}", output_base.display());
-        println!("[*] Audit log   : {}", output_base.join("collection.log").display());
-    }
-    println!();
+    ui::print_header(
+        &hostname,
+        cli.volume,
+        cli.dry_run,
+        definitions.len(),
+        &output_base,
+        &output_base.join("collection.log"),
+    );
 
     // ── Dry-run path: resolve and print, then exit ───────────────────────────
     if cli.dry_run {
@@ -147,8 +144,8 @@ fn main() -> Result<()> {
     }
 
     // ── Confirmation prompt ──────────────────────────────────────────────────
-    if !confirm_proceed("[?] Start collection? [y/N]: ") {
-        println!("[*] Aborted.");
+    if !ui::confirm("Start collection? [y/N]:") {
+        ui::print_info("Aborted.");
         return Ok(());
     }
     println!();
@@ -164,7 +161,7 @@ fn main() -> Result<()> {
 
     // ── Collection loop ──────────────────────────────────────────────────────
     // RawCollector is shared across all artifacts so that volume handles
-    // (\\.\C: etc.) are only opened and parsed once per run.
+    // (\\.\\C: etc.) are only opened and parsed once per run.
     let mut raw_collector = RawCollector::new();
 
     let mut n_ok: usize = 0;
@@ -176,21 +173,22 @@ fn main() -> Result<()> {
         let resolved = match path_resolver::resolve_path(&def.target_path) {
             Ok(paths) => paths,
             Err(e) => {
-                let msg = format!("path resolution failed for '{}': {:#}", def.name, e);
-                eprintln!("[WARN] {msg}");
-                audit.log_warn(&msg);
+                ui::print_warn(&format!(
+                    "path resolution failed for '{}': {:#}",
+                    def.name, e
+                ));
+                audit.log_warn(&format!("path resolution failed for '{}': {:#}", def.name, e));
                 n_fail += 1;
                 continue;
             }
         };
 
         if resolved.is_empty() {
-            let msg = format!(
-                "{}/{} — no files matched '{}'",
-                def.category, def.name, def.target_path
+            ui::print_skip(
+                &def.category,
+                &def.name,
+                &format!("no files matched '{}'", def.target_path),
             );
-            eprintln!("[SKIP] {msg}");
-            // No CollectionResult here — log_warn covers this case.
             audit.log_warn(&format!("no paths matched: {}", def.target_path));
             n_skip += 1;
             continue;
@@ -206,26 +204,26 @@ fn main() -> Result<()> {
                         (config::CollectionMethod::NTFS, _) => "NTFS",
                         (config::CollectionMethod::File, _) => "File",
                     };
-                    println!(
-                        "[OK][{method_tag}] {}/{} | {} bytes | {}... | -> {}",
-                        def.category,
-                        def.name,
+                    ui::print_ok(
+                        &def.category,
+                        &def.name,
+                        method_tag,
                         result.bytes_copied,
                         &result.sha256[..16],
-                        result.dest_path.display(),
+                        &result.dest_path,
                     );
                     audit.log_ok(&result);
                     n_ok += 1;
                 }
 
                 CollectionStatus::Skipped(reason) => {
-                    eprintln!("[SKIP] {}/{} — {}", def.category, def.name, reason);
+                    ui::print_skip(&def.category, &def.name, reason);
                     audit.log_skip(&result);
                     n_skip += 1;
                 }
 
                 CollectionStatus::Failed(reason) => {
-                    eprintln!("[FAIL] {}/{} — {}", def.category, def.name, reason);
+                    ui::print_fail(&def.category, &def.name, reason);
                     audit.log_fail(&result);
                     n_fail += 1;
                 }
@@ -234,15 +232,20 @@ fn main() -> Result<()> {
     }
 
     // ── Summary ──────────────────────────────────────────────────────────────
-    println!();
-    println!("[*] Complete — OK: {n_ok}  Skipped: {n_skip}  Failed: {n_fail}");
+    ui::print_summary(
+        n_ok,
+        n_skip,
+        n_fail,
+        &output_base,
+        &output_base.join("collection.log"),
+    );
     audit.log_summary(n_ok, n_skip, n_fail);
 
     // ── ZIP archive ──────────────────────────────────────────────────────────
     if cli.zip {
         let zip_path = create_zip(&output_base)
             .context("failed to create ZIP archive")?;
-        println!("[*] Archive     : {}", zip_path.display());
+        ui::print_info(&format!("Archive: {}", zip_path.display()));
     }
 
     Ok(())
@@ -259,88 +262,33 @@ fn run_dry(definitions: &[config::ArtifactDefinition]) {
         let resolved = match path_resolver::resolve_path(&def.target_path) {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("[WARN] path resolution failed for '{}': {:#}", def.name, e);
+                ui::print_warn(&format!("path resolution failed for '{}': {:#}", def.name, e));
                 vec![]
             }
         };
 
         if resolved.is_empty() {
-            println!(
-                "  [NO MATCH] [{:>10}] {} — '{}'",
-                def.category, def.name, def.target_path
-            );
+            ui::print_dry_no_match(&def.category, &def.name, &def.target_path);
         } else {
             for path in &resolved {
                 let size_str = match std::fs::metadata(path) {
                     Ok(m) => {
                         let bytes = m.len();
                         total_bytes += bytes;
-                        format_size(bytes)
+                        ui::format_size(bytes)
                     }
                     Err(_) => {
                         unknown_size_count += 1;
                         "?".to_owned()
                     }
                 };
-                println!(
-                    "  [WOULD COLLECT] [{:>10}] {:>10}  {} — {}",
-                    def.category,
-                    size_str,
-                    def.name,
-                    path.display()
-                );
+                ui::print_dry_collect(&def.category, &def.name, &size_str, path);
                 total_paths += 1;
             }
         }
     }
 
-    println!();
-    println!(
-        "[*] Dry run complete — {} artifact definition(s), {} path(s) would be collected",
-        definitions.len(),
-        total_paths,
-    );
-
-    // Size summary — only shown when at least one size was measured.
-    if total_bytes > 0 || unknown_size_count > 0 {
-        let unknown_note = if unknown_size_count > 0 {
-            format!(" (+{unknown_size_count} unknown)")
-        } else {
-            String::new()
-        };
-        println!(
-            "[*] Estimated raw size  : {}{}",
-            format_size(total_bytes),
-            unknown_note
-        );
-        // ZIP deflate compression on forensic artifacts typically achieves
-        // 60–70 % reduction for registry hives / event logs.  Use a
-        // conservative 50 % estimate as a lower-bound indicator.
-        let zip_low  = total_bytes / 3;       // ~67 % reduction (optimistic)
-        let zip_high = total_bytes / 2;       // ~50 % reduction (conservative)
-        println!(
-            "[*] Estimated ZIP size  : {} – {} (50–67 % compression assumed)",
-            format_size(zip_low),
-            format_size(zip_high),
-        );
-    }
-}
-
-/// Format a byte count as a human-readable string (B / KB / MB / GB).
-fn format_size(bytes: u64) -> String {
-    const KB: u64 = 1_024;
-    const MB: u64 = 1_024 * KB;
-    const GB: u64 = 1_024 * MB;
-
-    if bytes >= GB {
-        format!("{:.1} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.1} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.1} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{bytes} B")
-    }
+    ui::print_dry_summary(definitions.len(), total_paths, total_bytes, unknown_size_count);
 }
 
 // ── ZIP archive ───────────────────────────────────────────────────────────────
@@ -391,18 +339,6 @@ fn walkdir(dir: &Path) -> Result<Vec<PathBuf>> {
     collect_files(dir, &mut files)?;
     files.sort();
     Ok(files)
-}
-
-/// Print `prompt`, read one line from stdin, and return `true` only if the
-/// user typed `y` or `yes` (case-insensitive).  Returns `false` on I/O error.
-fn confirm_proceed(prompt: &str) -> bool {
-    print!("{prompt}");
-    let _ = std::io::stdout().flush();
-    let mut line = String::new();
-    if std::io::stdin().lock().read_line(&mut line).is_err() {
-        return false;
-    }
-    matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
 fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
