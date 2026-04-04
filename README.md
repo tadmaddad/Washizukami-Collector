@@ -45,6 +45,7 @@ This tool was inspired by [CDIR-C](https://github.com/CyberDefenseInstitute/CDIR
 | **Memory Acquisition Integration** | `--mem` option integrates with [WinPmem](https://github.com/Velocidex/WinPmem) to capture memory dumps |
 | **Dry-Run Mode** | Verify collection target paths without touching the filesystem |
 | **YARA Scanning** | `scan` subcommand scans persistence mechanisms with YARA-X, collecting detected files into `infected.zip` |
+| **Confirmation Prompt** | Prompts `[y/N]` before starting collection or scanning to prevent accidental execution |
 
 ---
 
@@ -99,6 +100,16 @@ Scan targets are automatically collected from the following persistence mechanis
 - `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
 - `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
 - `C:\Windows\System32\Tasks` (Task Scheduler XML)
+
+### Confirmation Prompt
+
+Before starting collection or a YARA scan, washi.exe displays a confirmation prompt:
+
+```
+[?] Start collection? [y/N]:
+```
+
+Type `y` or `yes` (case-insensitive) to proceed. Any other input, pressing Enter alone, or Ctrl+C will abort. `--dry-run` skips the prompt since no files are written.
 
 ### Examples
 

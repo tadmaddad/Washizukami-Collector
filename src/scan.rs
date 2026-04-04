@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::io::Write;
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -28,6 +28,18 @@ pub fn run_scan(args: ScanArgs) {
     println!("[*] YARA engine : {}", args.yara_path.display());
     println!("[*] Rules       : {}", args.rules.display());
     println!("[*] Output      : {}", args.output.display());
+    println!();
+
+    // ── Confirmation prompt ───────────────────────────────────────────────────
+    print!("[?] Start YARA scan? [y/N]: ");
+    let _ = std::io::stdout().flush();
+    let mut line = String::new();
+    if std::io::stdin().lock().read_line(&mut line).is_err()
+        || !matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+    {
+        println!("[*] Aborted.");
+        return;
+    }
     println!();
 
     // ── Collect targets ───────────────────────────────────────────────────────
@@ -341,6 +353,7 @@ fn extract_commands_from_xml(xml: &str, out: &mut Vec<PathBuf>) {
 ///   - `"C:\Program Files\App\app.exe" --silent`  →  `C:\Program Files\App\app.exe`
 ///   - `C:\Windows\system32\ctfmon.exe`            →  `C:\Windows\system32\ctfmon.exe`
 ///   - `%SystemRoot%\system32\foo.exe /arg`        →  `%SystemRoot%\system32\foo.exe`
+#[cfg(windows)]
 fn extract_exe_path(value: &str) -> Option<String> {
     let value = value.trim();
     if value.is_empty() {
