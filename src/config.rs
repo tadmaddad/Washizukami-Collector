@@ -79,20 +79,31 @@ pub struct ArtifactDefinition {
 ///
 /// ### Filtering rules (applied in order)
 ///
-/// 1. **Whitelist** (`enabled_artifacts`): if non-empty, only artifacts whose
-///    `name` appears in this list are kept.  Case-insensitive.
-/// 2. **Blacklist** (`disabled_categories`): artifacts whose `category` appears
-///    in this list are removed.  Case-insensitive.  Applied *after* the
-///    whitelist, so it can further restrict an explicit whitelist.
+/// 1. **Category whitelist** (`enabled_categories`): if non-empty, only
+///    artifacts whose `category` appears in this list are kept.
+///    Case-insensitive.  Set by CLI `--category Foo` (no prefix).
+/// 2. **Artifact whitelist** (`enabled_artifacts`): if non-empty, only
+///    artifacts whose `name` appears in this list are kept.
+///    Case-insensitive.  Available via `config.yaml` only.
+/// 3. **Category blacklist** (`disabled_categories`): artifacts whose
+///    `category` appears in this list are removed.  Case-insensitive.
+///    Set by CLI `--category !Foo` or `config.yaml`.
 ///
-/// An empty filter (both lists empty) is a no-op — all artifacts are kept.
+/// An empty filter (all lists empty) is a no-op — all artifacts are kept.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CollectionFilter {
+    /// Category whitelist.  Empty = no restriction.
+    /// CLI source: `--category Foo` (no `!` prefix).
+    #[serde(default)]
+    pub enabled_categories: Vec<String>,
+
     /// Artifact name whitelist.  Empty = no restriction.
+    /// Available via `config.yaml` only (not exposed as a CLI flag).
     #[serde(default)]
     pub enabled_artifacts: Vec<String>,
 
     /// Category blacklist.  Empty = no restriction.
+    /// CLI source: `--category !Foo`.
     #[serde(default)]
     pub disabled_categories: Vec<String>,
 }
@@ -150,6 +161,7 @@ impl ExternalConfig {
     pub fn into_filter(self) -> (CollectionFilter, Vec<ArtifactDefinition>) {
         (
             CollectionFilter {
+                enabled_categories: vec![],
                 enabled_artifacts: self.enabled_artifacts,
                 disabled_categories: self.disabled_categories,
             },
@@ -161,18 +173,25 @@ impl ExternalConfig {
 impl CollectionFilter {
     /// `true` when the filter places no restrictions.
     pub fn is_empty(&self) -> bool {
-        self.enabled_artifacts.is_empty() && self.disabled_categories.is_empty()
+        self.enabled_categories.is_empty()
+            && self.enabled_artifacts.is_empty()
+            && self.disabled_categories.is_empty()
     }
 
     /// Return a new filter that combines `self` (lower priority, e.g. from
     /// `config.yaml`) with `override_filter` (higher priority, e.g. from CLI).
     ///
     /// Merge semantics:
-    /// - `enabled_artifacts`: the override wins if non-empty; otherwise `self`
-    ///   is kept.
-    /// - `disabled_categories`: union of both lists (either source can disable
-    ///   a category).
+    /// - `enabled_categories`: override wins if non-empty; otherwise `self` kept.
+    /// - `enabled_artifacts`: override wins if non-empty; otherwise `self` kept.
+    /// - `disabled_categories`: union of both lists.
     pub fn merge_override(&self, override_filter: &CollectionFilter) -> CollectionFilter {
+        let enabled_categories = if override_filter.enabled_categories.is_empty() {
+            self.enabled_categories.clone()
+        } else {
+            override_filter.enabled_categories.clone()
+        };
+
         let enabled_artifacts = if override_filter.enabled_artifacts.is_empty() {
             self.enabled_artifacts.clone()
         } else {
@@ -190,6 +209,7 @@ impl CollectionFilter {
         }
 
         CollectionFilter {
+            enabled_categories,
             enabled_artifacts,
             disabled_categories,
         }
@@ -247,11 +267,26 @@ pub fn apply_filter(
     defs: Vec<ArtifactDefinition>,
     filter: &CollectionFilter,
 ) -> Vec<ArtifactDefinition> {
-    // Step 1: whitelist
-    let after_whitelist: Vec<ArtifactDefinition> = if filter.enabled_artifacts.is_empty() {
+    // Step 1: category whitelist (CLI --category Foo)
+    let after_cat_whitelist: Vec<ArtifactDefinition> = if filter.enabled_categories.is_empty() {
         defs
     } else {
         defs.into_iter()
+            .filter(|d| {
+                filter
+                    .enabled_categories
+                    .iter()
+                    .any(|c| c.eq_ignore_ascii_case(&d.category))
+            })
+            .collect()
+    };
+
+    // Step 2: artifact name whitelist (config.yaml enabled_artifacts)
+    let after_whitelist: Vec<ArtifactDefinition> = if filter.enabled_artifacts.is_empty() {
+        after_cat_whitelist
+    } else {
+        after_cat_whitelist
+            .into_iter()
             .filter(|d| {
                 filter
                     .enabled_artifacts
@@ -261,7 +296,7 @@ pub fn apply_filter(
             .collect()
     };
 
-    // Step 2: blacklist
+    // Step 3: category blacklist (CLI --category !Foo)
     if filter.disabled_categories.is_empty() {
         after_whitelist
     } else {
@@ -336,7 +371,7 @@ mod tests {
         let defs = load_embedded().unwrap();
         let filter = CollectionFilter {
             enabled_artifacts: vec!["SAM Registry Hive".to_owned()],
-            disabled_categories: vec![],
+            ..Default::default()
         };
         let result = apply_filter(defs, &filter);
         assert_eq!(result.len(), 1);
@@ -348,7 +383,7 @@ mod tests {
         let defs = load_embedded().unwrap();
         let filter = CollectionFilter {
             enabled_artifacts: vec!["sam registry hive".to_owned()],
-            disabled_categories: vec![],
+            ..Default::default()
         };
         let result = apply_filter(defs, &filter);
         assert_eq!(result.len(), 1);
@@ -371,8 +406,8 @@ mod tests {
         let total = defs.len();
         let eventlog_count = defs.iter().filter(|d| d.category == "EventLogs").count();
         let filter = CollectionFilter {
-            enabled_artifacts: vec![],
             disabled_categories: vec!["EventLogs".to_owned()],
+            ..Default::default()
         };
         let result = apply_filter(defs, &filter);
         assert_eq!(result.len(), total - eventlog_count);
@@ -383,12 +418,12 @@ mod tests {
     fn blacklist_is_case_insensitive() {
         let _defs = load_embedded().unwrap();
         let filter_lower = CollectionFilter {
-            enabled_artifacts: vec![],
             disabled_categories: vec!["eventlogs".to_owned()],
+            ..Default::default()
         };
         let filter_upper = CollectionFilter {
-            enabled_artifacts: vec![],
             disabled_categories: vec!["EVENTLOGS".to_owned()],
+            ..Default::default()
         };
         assert_eq!(
             apply_filter(load_embedded().unwrap(), &filter_lower).len(),
@@ -406,6 +441,7 @@ mod tests {
         let filter = CollectionFilter {
             enabled_artifacts: vec!["Security Event Log".to_owned()],
             disabled_categories: vec!["EventLogs".to_owned()],
+            ..Default::default()
         };
         let result = apply_filter(defs, &filter);
         assert!(result.is_empty(), "disabled category should override enabled_artifacts");
@@ -417,11 +453,11 @@ mod tests {
     fn merge_override_cli_whitelist_wins() {
         let base = CollectionFilter {
             enabled_artifacts: vec!["A".to_owned()],
-            disabled_categories: vec![],
+            ..Default::default()
         };
         let cli = CollectionFilter {
             enabled_artifacts: vec!["B".to_owned()],
-            disabled_categories: vec![],
+            ..Default::default()
         };
         let merged = base.merge_override(&cli);
         assert_eq!(merged.enabled_artifacts, vec!["B"]);
@@ -431,7 +467,7 @@ mod tests {
     fn merge_override_empty_cli_keeps_base_whitelist() {
         let base = CollectionFilter {
             enabled_artifacts: vec!["A".to_owned()],
-            disabled_categories: vec![],
+            ..Default::default()
         };
         let cli = CollectionFilter::default();
         let merged = base.merge_override(&cli);
@@ -441,12 +477,12 @@ mod tests {
     #[test]
     fn merge_override_blacklists_are_unioned() {
         let base = CollectionFilter {
-            enabled_artifacts: vec![],
             disabled_categories: vec!["EventLogs".to_owned()],
+            ..Default::default()
         };
         let cli = CollectionFilter {
-            enabled_artifacts: vec![],
             disabled_categories: vec!["Registry".to_owned()],
+            ..Default::default()
         };
         let merged = base.merge_override(&cli);
         assert_eq!(merged.disabled_categories.len(), 2);
@@ -505,7 +541,7 @@ mod tests {
         // CLI overrides to only SAM
         let cli = CollectionFilter {
             enabled_artifacts: vec!["SAM Registry Hive".to_owned()],
-            disabled_categories: vec![],
+            ..Default::default()
         };
         let defs = load_artifacts(&tmp, Some(&cli)).unwrap();
         assert_eq!(defs.len(), 1);

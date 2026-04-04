@@ -35,6 +35,7 @@ pub fn print_header(
     hostname: &str,
     volume_override: Option<char>,
     dry_run: bool,
+    verbose: bool,
     artifact_count: usize,
     output_base: &Path,
     log_path: &Path,
@@ -56,6 +57,8 @@ pub fn print_header(
 
     let mode = if dry_run {
         "DRY RUN (no files will be copied)"
+    } else if verbose {
+        "Collection (verbose)"
     } else {
         "Collection"
     };
@@ -99,6 +102,51 @@ pub fn confirm(prompt: &str) -> bool {
         return false;
     }
     matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+}
+
+// ── Category-level summary row (default mode) ────────────────────────────────
+
+/// Print a single aggregated row for one category (default non-verbose output).
+///
+/// Icon and colour reflect the worst outcome in the category:
+/// - any failure  → ✖ red
+/// - any skip     → ⚠ yellow
+/// - all ok       → ✔ green
+pub fn print_category_line(
+    category: &str,
+    n_ok: usize,
+    n_skip: usize,
+    n_fail: usize,
+    bytes: u64,
+) {
+    let (icon, label) = if n_fail > 0 {
+        ("✖".red().to_string(), category.red().to_string())
+    } else if n_skip > 0 {
+        ("⚠".yellow().to_string(), category.yellow().to_string())
+    } else {
+        ("✔".green().to_string(), category.to_string())
+    };
+
+    let total = n_ok + n_skip + n_fail;
+    let mut parts: Vec<String> = vec![
+        format!("{total} file(s)"),
+    ];
+    if bytes > 0 {
+        parts.push(format_size(bytes));
+    }
+    if n_skip > 0 {
+        parts.push(format!("{} skipped", n_skip.to_string().yellow()));
+    }
+    if n_fail > 0 {
+        parts.push(format!("{} failed", n_fail.to_string().red()));
+    }
+
+    println!(
+        "  {}  {:<12}  {}",
+        icon,
+        label,
+        parts.join("  ·  "),
+    );
 }
 
 // ── Collection status rows ────────────────────────────────────────────────────

@@ -40,7 +40,7 @@ This tool was inspired by [CDIR-C](https://github.com/CyberDefenseInstitute/CDIR
 | **SHA-256 Integrity Verification** | Hashes all collected files to enable tamper detection |
 | **Audit Log** | Structured log (`collection.log`) containing timestamps, collection method, and SHA-256 hashes |
 | **Single Binary** | Artifact definitions are embedded at compile time — no external files needed at runtime |
-| **Flexible Filtering** | Control collection targets by name or category via CLI flags or `config.yaml` |
+| **Flexible Filtering** | Filter by category via `--category` (include or exclude with `!` prefix), or fine-tune via `config.yaml` |
 | **ZIP Output** | Compresses all collected artifacts into a single ZIP after collection for easy exfiltration |
 | **Memory Acquisition Integration** | `--mem` option integrates with [WinPmem](https://github.com/Velocidex/WinPmem) to capture memory dumps |
 | **Dry-Run Mode** | Verify collection target paths without touching the filesystem |
@@ -73,12 +73,15 @@ washi.exe [OPTIONS]
 Options:
   -o, --output <DIR>               Output directory
                                    [Default: <executable folder>\output\<COMPUTERNAME>]
-  -a, --artifact <NAME>            Specify collection targets by name (case-insensitive, multiple allowed)
-  -x, --exclude-category <CAT>     Exclude categories (multiple allowed)
+  -c, --category <CATEGORY>        Filter by category (repeatable, case-insensitive).
+                                   Without prefix: collect only these categories.
+                                   With '!' prefix: exclude these categories.
+                                   Available: EventLogs, Registry, NTFS, Filesystem, WMI, SRUM, Web
       --dry-run                    Display path resolution results only (no files are collected)
       --zip                        Generate a ZIP archive after collection
       --mem                        Capture memory dump with tools\winpmem*.exe (runs before collection)
       --volume <LETTER>            Override the drive letter for NTFS Raw Read
+  -v, --verbose                    Show every collected file instead of one summary line per category
   -h, --help
   -V, --version
 ```
@@ -123,11 +126,14 @@ washi.exe --zip
 # Capture memory dump → Collect all artifacts → Generate ZIP
 washi.exe --mem --zip
 
-# Collect registry only (exclude EventLogs and FileSystem)
-washi.exe --exclude-category EventLogs --exclude-category FileSystem
+# Collect Registry and EventLogs only
+washi.exe --category Registry --category EventLogs
 
-# Collect specific artifacts by name
-washi.exe --artifact "SAM Registry Hive" --artifact "Security Event Log"
+# Collect everything except EventLogs and WMI
+washi.exe --category '!EventLogs' --category '!WMI'
+
+# Show every collected file (verbose output)
+washi.exe --verbose
 
 # Verify collection targets (no files are written)
 washi.exe --dry-run
@@ -271,7 +277,7 @@ Required fields:
 
 | Field | Description |
 |-------|-------------|
-| `name` | Unique display name. Referenced by `--artifact` and `enabled_artifacts`. |
+| `name` | Unique display name. Referenced by `enabled_artifacts` in `config.yaml`. |
 | `category` | Group name. Also used as the output subfolder name. |
 | `target_path` | Path to collect. Supports `%VAR%` environment variables and glob wildcards (`*` and `?`). |
 | `method` | `File` — standard OS copy. `NTFS` — direct MFT read, bypasses file locks. |

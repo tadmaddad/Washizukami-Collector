@@ -38,7 +38,7 @@ OS がファイルをロックしている状況下でも、NTFS の Master File
 | **SHA-256 整合性検証** | 収集したファイルをすべてハッシュ化し、改ざん検知を可能に |
 | **監査ログ** | タイムスタンプ・収集方法・SHA-256 を含む構造化ログ (`collection.log`) |
 | **単一バイナリ** | アーティファクト定義をコンパイル時に内蔵 — 実行時に外部ファイル不要 |
-| **柔軟なフィルタリング** | CLI フラグまたは `config.yaml` で収集対象を名前・カテゴリ単位で制御 |
+| **柔軟なフィルタリング** | `--category` でカテゴリ単位のインクルード/エクスクルード（`!` プレフィックスで除外）、詳細は `config.yaml` で制御 |
 | **ZIP 出力** | 収集完了後にすべての成果物を単一 ZIP に圧縮して搬出を容易に |
 | **メモリ取得連携** | `--mem` オプションで [WinPmem](https://github.com/Velocidex/WinPmem) と連携してメモリダンプを取得 |
 | **Dry-Run モード** | ファイルシステムに触れずに収集対象パスのみを確認 |
@@ -71,12 +71,15 @@ washi.exe [OPTIONS]
 Options:
   -o, --output <DIR>               出力先ディレクトリ
                                    [デフォルト: <実行ファイルのフォルダ>\output\<COMPUTERNAME>]
-  -a, --artifact <NAME>            収集対象を名前で指定（大文字小文字不問、複数指定可）
-  -x, --exclude-category <CAT>     除外するカテゴリ（複数指定可）
+  -c, --category <CATEGORY>        カテゴリでフィルタリング（複数指定可、大文字小文字不問）
+                                   プレフィックスなし: 指定カテゴリのみ収集
+                                   '!' プレフィックス: 指定カテゴリを除外
+                                   指定可能値: EventLogs, Registry, NTFS, Filesystem, WMI, SRUM, Web
       --dry-run                    パス解決結果のみ表示（ファイルは収集しない）
       --zip                        収集完了後に ZIP アーカイブを生成
       --mem                        tools\winpmem*.exe でメモリダンプを取得（収集前に実行）
       --volume <LETTER>            NTFS Raw Read のドライブレターを上書き
+  -v, --verbose                    カテゴリ単位の集計ではなく収集ファイルを1件ずつ表示
   -h, --help
   -V, --version
 ```
@@ -121,11 +124,14 @@ washi.exe --zip
 # メモリダンプ取得 → 全アーティファクト収集 → ZIP 生成
 washi.exe --mem --zip
 
-# レジストリのみ収集（EventLogs と FileSystem を除外）
-washi.exe --exclude-category EventLogs --exclude-category FileSystem
+# Registry と EventLogs のみ収集
+washi.exe --category Registry --category EventLogs
 
-# 特定アーティファクトを名前で指定して収集
-washi.exe --artifact "SAM Registry Hive" --artifact "Security Event Log"
+# EventLogs と WMI を除外してすべて収集
+washi.exe --category '!EventLogs' --category '!WMI'
+
+# 収集ファイルを1件ずつ表示（詳細モード）
+washi.exe --verbose
 
 # 収集対象の確認（ファイルは書き込まない）
 washi.exe --dry-run
@@ -269,7 +275,7 @@ washi.exe scan --rules C:\rules\malware.yar --output C:\scan_out
 
 | フィールド | 説明 |
 |-----------|------|
-| `name` | 一意な表示名。`--artifact` や `enabled_artifacts` から参照されます。 |
+| `name` | 一意な表示名。`config.yaml` の `enabled_artifacts` から参照されます。 |
 | `category` | グループ名。出力サブフォルダ名にも使用されます。 |
 | `target_path` | 収集対象パス。`%VAR%` 形式の環境変数とグロブワイルドカード（`*`・`?`）が使用可能。 |
 | `method` | `File`（通常の OS コピー）または `NTFS`（MFT 直接読み取り、ファイルロック回避）。 |

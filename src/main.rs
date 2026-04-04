@@ -17,9 +17,9 @@ use std::path::{Path, PathBuf};
 
 // ── CLI definition ────────────────────────────────────────────────────────────
 
-/// Washizukami (鷲掴) — fast forensic artifact collector.
+/// Fast forensic artifact collector for Windows.
 ///
-/// Collects Windows artifacts (event logs, registry hives, filesystem items)
+/// Collects artifacts (event logs, registry hives, filesystem items)
 /// using raw NTFS access to bypass OS file locks.
 /// Must be run as Administrator.
 #[derive(Parser, Debug)]
@@ -33,15 +33,16 @@ struct Cli {
     #[arg(short, long, value_name = "DIR")]
     output: Option<PathBuf>,
 
-    /// Collect only these artifact names (case-insensitive, repeatable).
-    /// Example: --artifact "SAM Registry Hive" --artifact "Security Event Log"
-    #[arg(short, long = "artifact", value_name = "NAME")]
-    artifacts: Vec<String>,
-
-    /// Exclude all artifacts in this category (case-insensitive, repeatable).
-    /// Example: --exclude-category EventLogs --exclude-category Registry
-    #[arg(short = 'x', long = "exclude-category", value_name = "CATEGORY")]
-    exclude_categories: Vec<String>,
+    /// Filter by category (repeatable, case-insensitive).
+    /// Without prefix: collect only these categories.
+    /// With '!' prefix: exclude these categories.
+    /// Examples:
+    ///   --category Registry
+    ///   --category Registry --category EventLogs
+    ///   --category '!EventLogs' --category '!WMI'
+    /// Available: EventLogs, Registry, NTFS, Filesystem, WMI, SRUM, Web
+    #[arg(short, long = "category", value_name = "CATEGORY")]
+    categories: Vec<String>,
 
     /// List matching artifacts and their resolved paths, then exit without
     /// collecting anything.
@@ -63,6 +64,10 @@ struct Cli {
     /// The dump is written to <output_dir>/memory.dmp.
     #[arg(long)]
     mem: bool,
+
+    /// Show every collected file instead of one summary line per category.
+    #[arg(short, long)]
+    verbose: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -114,9 +119,24 @@ fn main() -> Result<()> {
         .unwrap_or_else(|| exe_dir.join("output").join(&hostname));
 
     // ── Build CLI filter ─────────────────────────────────────────────────────
+    let (include_cats, exclude_cats): (Vec<String>, Vec<String>) =
+        cli.categories.into_iter().partition(|c| !c.starts_with('!'));
+    let exclude_cats: Vec<String> = exclude_cats
+        .into_iter()
+        .map(|c| c.trim_start_matches('!').to_owned())
+        .collect();
+
+    if !include_cats.is_empty() && !exclude_cats.is_empty() {
+        eprintln!(
+            "error: --category cannot mix include and exclude (with '!') in the same invocation"
+        );
+        std::process::exit(1);
+    }
+
     let cli_filter = CollectionFilter {
-        enabled_artifacts: cli.artifacts,
-        disabled_categories: cli.exclude_categories,
+        enabled_categories: include_cats,
+        enabled_artifacts: vec![],
+        disabled_categories: exclude_cats,
     };
     let cli_filter_opt = if cli_filter.is_empty() {
         None
@@ -132,6 +152,7 @@ fn main() -> Result<()> {
         &hostname,
         cli.volume,
         cli.dry_run,
+        cli.verbose,
         definitions.len(),
         &output_base,
         &output_base.join("collection.log"),
@@ -168,29 +189,56 @@ fn main() -> Result<()> {
     let mut n_skip: usize = 0;
     let mut n_fail: usize = 0;
 
+    // Category-level accumulators (used in default / non-verbose mode).
+    let mut current_cat: Option<String> = None;
+    let mut cat_ok: usize = 0;
+    let mut cat_skip: usize = 0;
+    let mut cat_fail: usize = 0;
+    let mut cat_bytes: u64 = 0;
+
     for def in &definitions {
+        // ── Default mode: flush previous category line on category change ────
+        if !cli.verbose {
+            if current_cat.as_deref() != Some(def.category.as_str()) {
+                if let Some(ref cat) = current_cat {
+                    ui::print_category_line(cat, cat_ok, cat_skip, cat_fail, cat_bytes);
+                }
+                current_cat = Some(def.category.clone());
+                cat_ok = 0;
+                cat_skip = 0;
+                cat_fail = 0;
+                cat_bytes = 0;
+            }
+        }
+
         // Expand environment variables and glob wildcards.
         let resolved = match path_resolver::resolve_path(&def.target_path) {
             Ok(paths) => paths,
             Err(e) => {
-                ui::print_warn(&format!(
-                    "path resolution failed for '{}': {:#}",
-                    def.name, e
-                ));
+                if cli.verbose {
+                    ui::print_warn(&format!(
+                        "path resolution failed for '{}': {:#}",
+                        def.name, e
+                    ));
+                }
                 audit.log_warn(&format!("path resolution failed for '{}': {:#}", def.name, e));
                 n_fail += 1;
+                cat_fail += 1;
                 continue;
             }
         };
 
         if resolved.is_empty() {
-            ui::print_skip(
-                &def.category,
-                &def.name,
-                &format!("no files matched '{}'", def.target_path),
-            );
+            if cli.verbose {
+                ui::print_skip(
+                    &def.category,
+                    &def.name,
+                    &format!("no files matched '{}'", def.target_path),
+                );
+            }
             audit.log_warn(&format!("no paths matched: {}", def.target_path));
             n_skip += 1;
+            cat_skip += 1;
             continue;
         }
 
@@ -199,35 +247,51 @@ fn main() -> Result<()> {
 
             match &result.status {
                 CollectionStatus::Success => {
-                    let method_tag = match (result.method_used.clone(), result.fell_back) {
-                        (_, true) => "NTFS-fallback",
-                        (config::CollectionMethod::NTFS, _) => "NTFS",
-                        (config::CollectionMethod::File, _) => "File",
-                    };
-                    ui::print_ok(
-                        &def.category,
-                        &def.name,
-                        method_tag,
-                        result.bytes_copied,
-                        &result.sha256[..16],
-                        &result.dest_path,
-                    );
+                    if cli.verbose {
+                        let method_tag = match (result.method_used.clone(), result.fell_back) {
+                            (_, true) => "NTFS-fallback",
+                            (config::CollectionMethod::NTFS, _) => "NTFS",
+                            (config::CollectionMethod::File, _) => "File",
+                        };
+                        ui::print_ok(
+                            &def.category,
+                            &def.name,
+                            method_tag,
+                            result.bytes_copied,
+                            &result.sha256[..16],
+                            &result.dest_path,
+                        );
+                    }
                     audit.log_ok(&result);
                     n_ok += 1;
+                    cat_ok += 1;
+                    cat_bytes += result.bytes_copied;
                 }
 
                 CollectionStatus::Skipped(reason) => {
-                    ui::print_skip(&def.category, &def.name, reason);
+                    if cli.verbose {
+                        ui::print_skip(&def.category, &def.name, reason);
+                    }
                     audit.log_skip(&result);
                     n_skip += 1;
+                    cat_skip += 1;
                 }
 
                 CollectionStatus::Failed(reason) => {
+                    // Always surface failures regardless of verbosity.
                     ui::print_fail(&def.category, &def.name, reason);
                     audit.log_fail(&result);
                     n_fail += 1;
+                    cat_fail += 1;
                 }
             }
+        }
+    }
+
+    // Flush the last category line (default mode).
+    if !cli.verbose {
+        if let Some(ref cat) = current_cat {
+            ui::print_category_line(cat, cat_ok, cat_skip, cat_fail, cat_bytes);
         }
     }
 

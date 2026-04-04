@@ -175,21 +175,21 @@ mod tests {
 
     #[test]
     fn expand_percent_style() {
-        std::env::set_var("TEST_CDIR_VAR", "C:\\Windows");
+        unsafe { std::env::set_var("TEST_CDIR_VAR", "C:\\Windows") };
         let result = expand_env_vars("%TEST_CDIR_VAR%\\System32");
         assert_eq!(result, "C:\\Windows\\System32");
     }
 
     #[test]
     fn expand_dollar_brace_style() {
-        std::env::set_var("TEST_CDIR_HOME", "/home/user");
+        unsafe { std::env::set_var("TEST_CDIR_HOME", "/home/user") };
         let result = expand_env_vars("${TEST_CDIR_HOME}/logs");
         assert_eq!(result, "/home/user/logs");
     }
 
     #[test]
     fn expand_dollar_style() {
-        std::env::set_var("TEST_CDIR_DIR", "/tmp");
+        unsafe { std::env::set_var("TEST_CDIR_DIR", "/tmp") };
         let result = expand_env_vars("$TEST_CDIR_DIR/file.log");
         assert_eq!(result, "/tmp/file.log");
     }
