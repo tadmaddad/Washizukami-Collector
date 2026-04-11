@@ -70,7 +70,7 @@ washi.exe [OPTIONS]
 
 Options:
   -o, --output <DIR>               出力先ディレクトリ
-                                   [デフォルト: <実行ファイルのフォルダ>\output\<COMPUTERNAME>]
+                                   [デフォルト: <実行ファイルのフォルダ>\<COMPUTERNAME>]
   -c, --category <CATEGORY>        カテゴリでフィルタリング（複数指定可、大文字小文字不問）
                                    プレフィックスなし: 指定カテゴリのみ収集
                                    '!' プレフィックス: 指定カテゴリを除外
@@ -96,11 +96,44 @@ Options:
   -h, --help
 ```
 
-スキャン対象は以下の永続化メカニズムから自動収集されます：
+**前提:** [YARA-X](https://github.com/VirusTotal/yara-x)（`yr.exe`）を `washi.exe` と同じフォルダの `tools\` に配置するか、`--yara-path` でパスを指定してください。
 
-- `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
-- `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
-- `C:\Windows\System32\Tasks`（タスクスケジューラ XML）
+#### 動作の流れ
+
+スキャンモードは、Windows の**永続化メカニズム**に登録された実行ファイルパスを対象にします。永続化メカニズムとは、OS が再起動後も自動的にプログラムを起動するために使う仕組みであり、マルウェアが生き残るための隠れ場所として頻繁に悪用されます。
+
+**Step 1 — スキャン対象の収集**
+
+以下のソースを自動的に列挙し、実行ファイルパスを抽出します。
+
+| ソース | 内容 |
+|--------|------|
+| `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run` | ログイン時に**全ユーザー**向けに起動されるプログラム（システム共通） |
+| `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run` | ログイン時に**現在のユーザーのみ**起動されるプログラム |
+| `C:\Windows\System32\Tasks`（タスクスケジューラ XML） | スケジュールされたタスク — 時刻・イベント・システム状態などをトリガーに起動 |
+
+Run キーの値については、引数文字列を除去（例: `"C:\App\tool.exe" --silent` → `C:\App\tool.exe`）し、環境変数を展開（`%SystemRoot%` → `C:\Windows`）します。絶対パスを持たないエントリ（`sc.exe` のようなベアファイル名）はディスク上の場所を特定できないためスキップし、警告を表示します。
+
+**Step 2 — YARA-X でスキャン**
+
+収集したパスを一時リストファイルに書き出し、`--scan-list` で `yr.exe` に渡します。yr.exe は各ファイルの内容を YARA ルールと照合します。
+
+**Step 3 — 検知ファイルのアーカイブ**
+
+YARA ルールにマッチしたファイルは、出力先の `infected.zip` にコピーされます。監査ログ（`collection.log`）には、マッチしたルール名とファイルパスがすべて記録されます。
+
+#### 実行例（出力イメージ）
+
+```
+·  Collecting persistence targets…
+⚠  Not an absolute path: sc.exe              ← スキップ（絶対パスなし）
+·  48 target(s) to scan
+·  Running YARA scan…
+⚠  C:\Users\Public\malware.exe  —  Detect_Mimikatz
+────────────────────────────────────────────────────
+⚠  Scan complete  ·  1 of 48 target(s) matched
+   Archive  C:\scan_out\infected.zip
+```
 
 ### 確認プロンプト
 
@@ -175,30 +208,31 @@ washi.exe scan --rules C:\rules\malware.yar --output C:\scan_out
 
 ```
 <実行フォルダ>\
-├── output\
-│   └── HOSTNAME\
-│       ├── collection.log      ← 監査ログ（タイムスタンプ・SHA-256・収集方法）
-│       ├── memory.dmp          ← メモリダンプ（--mem 指定時のみ）
-│       ├── EventLogs\
-│       │   ├── Security.evtx
-│       │   └── ...
-│       ├── Registry\
-│       │   ├── SAM
-│       │   └── ...
-│       ├── NTFS\
-│       │   ├── $MFT
-│       │   ├── $Secure_SDS     ← $SECURE:$SDS ストリーム
-│       │   └── $UsnJrnl_J      ← $UsnJrnl:$J ストリーム
-│       ├── Filesystem\
-│       │   └── ...
-│       ├── WMI\
-│       │   └── ...
-│       ├── SRUM\
-│       │   └── SRUDB.dat
-│       └── Web\
-│           └── ...
-└── output\HOSTNAME.zip         ← ZIP アーカイブ（--zip 指定時のみ）
+├── HOSTNAME\                   ← 出力フォルダ（washi.exe と同じ階層に生成）
+│   ├── collection.log          ← 監査ログ（タイムスタンプ・SHA-256・収集方法）
+│   ├── memory.dmp              ← メモリダンプ（--mem 指定時のみ）
+│   ├── EventLogs\
+│   │   ├── Security.evtx
+│   │   └── ...
+│   ├── Registry\
+│   │   ├── SAM
+│   │   └── ...
+│   ├── NTFS\
+│   │   ├── $MFT
+│   │   ├── $Secure_SDS         ← $SECURE:$SDS ストリーム
+│   │   └── $UsnJrnl_J          ← $UsnJrnl:$J ストリーム
+│   ├── Filesystem\
+│   │   └── ...
+│   ├── WMI\
+│   │   └── ...
+│   ├── SRUM\
+│   │   └── SRUDB.dat
+│   └── Web\
+│       └── ...
+└── HOSTNAME.zip                ← ZIP アーカイブ（--zip 指定時のみ）
 ```
+
+> **ダブルクリック起動:** 引数なしで `washi.exe` を実行すると、デフォルト設定で即座に収集を開始します（ZIP は生成しません）。完了後はコンソールウィンドウが開いたままになるため、結果を確認してから Enter キーで閉じることができます。
 
 ### 監査ログ形式
 

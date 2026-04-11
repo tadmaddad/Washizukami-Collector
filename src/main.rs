@@ -91,9 +91,40 @@ enum Commands {
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 fn main() -> Result<()> {
+    // Detect double-click launch (no arguments passed by the user).
+    let no_args = std::env::args_os().len() == 1;
+
+    let result = run(no_args);
+
+    // When launched without arguments (e.g. double-click), keep the window
+    // open after completion so the user can read the output.
+    if no_args {
+        eprintln!("\nPress Enter to exit...");
+        let _ = std::io::stdin().read_line(&mut String::new());
+    }
+
+    result
+}
+
+fn run(no_args: bool) -> Result<()> {
     ui::init();
 
-    let cli = Cli::parse();
+    // When no arguments are given (double-click), skip Clap parsing and use
+    // sensible defaults: collect everything, no ZIP, no dry-run.
+    let cli = if no_args {
+        Cli {
+            command: None,
+            output: None,
+            categories: vec![],
+            dry_run: false,
+            zip: false,
+            volume: None,
+            mem: false,
+            verbose: false,
+        }
+    } else {
+        Cli::parse()
+    };
 
     // ── Subcommand dispatch ───────────────────────────────────────────────────
     if let Some(Commands::Scan { yara_path, rules, output }) = cli.command {
@@ -116,7 +147,7 @@ fn main() -> Result<()> {
 
     let output_base = cli
         .output
-        .unwrap_or_else(|| exe_dir.join("output").join(&hostname));
+        .unwrap_or_else(|| exe_dir.join(&hostname));
 
     // ── Build CLI filter ─────────────────────────────────────────────────────
     let (include_cats, exclude_cats): (Vec<String>, Vec<String>) =

@@ -72,7 +72,7 @@ washi.exe [OPTIONS]
 
 Options:
   -o, --output <DIR>               Output directory
-                                   [Default: <executable folder>\output\<COMPUTERNAME>]
+                                   [Default: <executable folder>\<COMPUTERNAME>]
   -c, --category <CATEGORY>        Filter by category (repeatable, case-insensitive).
                                    Without prefix: collect only these categories.
                                    With '!' prefix: exclude these categories.
@@ -98,11 +98,44 @@ Options:
   -h, --help
 ```
 
-Scan targets are automatically collected from the following persistence mechanisms:
+**Prerequisites:** Place [YARA-X](https://github.com/VirusTotal/yara-x) (`yr.exe`) in the `tools\` folder alongside `washi.exe`, or specify its path with `--yara-path`.
 
-- `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
-- `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
-- `C:\Windows\System32\Tasks` (Task Scheduler XML)
+#### How it works
+
+The scan mode targets executable paths registered in Windows **persistence mechanisms** — locations the OS uses to automatically launch programs. These are common hiding spots for malware that needs to survive reboots.
+
+**Step 1 — Collect persistence targets**
+
+Washi automatically enumerates the following sources and extracts the executable paths:
+
+| Source | What it covers |
+|--------|----------------|
+| `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run` | Programs launched at login for **all users** (system-wide) |
+| `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run` | Programs launched at login for the **current user** only |
+| `C:\Windows\System32\Tasks` (Task Scheduler XML) | Scheduled tasks — programs triggered by time, events, or system state |
+
+For Run key entries, argument strings are stripped (e.g., `"C:\App\tool.exe" --silent` → `C:\App\tool.exe`) and environment variables are expanded (`%SystemRoot%` → `C:\Windows`). Entries without an absolute path (bare filenames like `sc.exe`) are skipped with a warning since they cannot be reliably located on disk.
+
+**Step 2 — Scan with YARA-X**
+
+Collected paths are written to a temporary list file and passed to `yr.exe` via `--scan-list`. yr.exe scans each file's content against your YARA rules.
+
+**Step 3 — Archive matches**
+
+Files that triggered a YARA rule are copied into `infected.zip` in the output directory. The audit log (`collection.log`) records every match with the rule name and file path.
+
+#### Sample output
+
+```
+·  Collecting persistence targets…
+⚠  Not an absolute path: sc.exe              ← skipped (no absolute path)
+·  48 target(s) to scan
+·  Running YARA scan…
+⚠  C:\Users\Public\malware.exe  —  Detect_Mimikatz
+────────────────────────────────────────────────────
+⚠  Scan complete  ·  1 of 48 target(s) matched
+   Archive  C:\scan_out\infected.zip
+```
 
 ### Confirmation Prompt
 
@@ -177,30 +210,31 @@ Below is the list of artifacts covered by the built-in definitions. You can also
 
 ```
 <executable folder>\
-├── output\
-│   └── HOSTNAME\
-│       ├── collection.log      ← Audit log (timestamps, SHA-256, collection method)
-│       ├── memory.dmp          ← Memory dump (only when --mem is specified)
-│       ├── EventLogs\
-│       │   ├── Security.evtx
-│       │   └── ...
-│       ├── Registry\
-│       │   ├── SAM
-│       │   └── ...
-│       ├── NTFS\
-│       │   ├── $MFT
-│       │   ├── $Secure_SDS     ← $SECURE:$SDS stream
-│       │   └── $UsnJrnl_J      ← $UsnJrnl:$J stream
-│       ├── Filesystem\
-│       │   └── ...
-│       ├── WMI\
-│       │   └── ...
-│       ├── SRUM\
-│       │   └── SRUDB.dat
-│       └── Web\
-│           └── ...
-└── output\HOSTNAME.zip         ← ZIP archive (only when --zip is specified)
+├── HOSTNAME\                   ← Output folder (created next to washi.exe)
+│   ├── collection.log          ← Audit log (timestamps, SHA-256, collection method)
+│   ├── memory.dmp              ← Memory dump (only when --mem is specified)
+│   ├── EventLogs\
+│   │   ├── Security.evtx
+│   │   └── ...
+│   ├── Registry\
+│   │   ├── SAM
+│   │   └── ...
+│   ├── NTFS\
+│   │   ├── $MFT
+│   │   ├── $Secure_SDS         ← $SECURE:$SDS stream
+│   │   └── $UsnJrnl_J          ← $UsnJrnl:$J stream
+│   ├── Filesystem\
+│   │   └── ...
+│   ├── WMI\
+│   │   └── ...
+│   ├── SRUM\
+│   │   └── SRUDB.dat
+│   └── Web\
+│       └── ...
+└── HOSTNAME.zip                ← ZIP archive (only when --zip is specified)
 ```
+
+> **Double-click launch:** Running `washi.exe` without arguments starts collection immediately with default settings (no ZIP). The console window stays open after completion so you can review the results — press Enter to close it.
 
 ### Audit Log Format
 

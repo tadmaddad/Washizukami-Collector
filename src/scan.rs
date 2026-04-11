@@ -471,12 +471,14 @@ fn run_yara_scan(yara_path: &Path, rules: &Path, targets: &[&PathBuf]) -> Vec<Sc
         return Vec::new();
     }
 
-    let results = parse_yara_json(&stdout);
-    if results.is_empty() && !stdout.trim().is_empty() {
-        let snippet: String = stdout.chars().take(300).collect();
-        eprintln!("[WARN] yr.exe output could not be parsed, snippet: {snippet}");
+    match parse_yara_json(&stdout) {
+        Some(results) => results,
+        None => {
+            let snippet: String = stdout.chars().take(300).collect();
+            eprintln!("[WARN] yr.exe output could not be parsed, snippet: {snippet}");
+            Vec::new()
+        }
     }
-    results
 }
 
 // ── infected.zip ──────────────────────────────────────────────────────────────
@@ -533,7 +535,16 @@ fn create_infected_zip(zip_path: &Path, matches: &[ScanMatch]) -> anyhow::Result
 /// ```
 /// Each entry in `matches` is one (rule, file) pair.
 /// Multiple entries sharing the same `"file"` are grouped into one `ScanMatch`.
-fn parse_yara_json(json: &str) -> Vec<ScanMatch> {
+///
+/// Returns `Some(vec)` on a valid YARA-X response (vec may be empty when no rules fired).
+/// Returns `None` when the output does not look like a YARA-X JSON response at all.
+fn parse_yara_json(json: &str) -> Option<Vec<ScanMatch>> {
+    // A valid YARA-X response always contains the "matches" key.
+    // Absence of this key means unexpected output (error message, wrong tool, etc.).
+    if !json.contains("\"matches\"") {
+        return None;
+    }
+
     // Collect all (file, rule) pairs by scanning for "rule" then "file" in sequence.
     let mut pairs: Vec<(String, String)> = Vec::new();
     let mut cursor = json;
@@ -564,7 +575,7 @@ fn parse_yara_json(json: &str) -> Vec<ScanMatch> {
         }
     }
 
-    results
+    Some(results)
 }
 
 /// Find `key` in `json`, then extract and return the JSON string value that
