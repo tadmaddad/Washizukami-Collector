@@ -65,6 +65,22 @@ This tool was inspired by [CDIR-C](https://github.com/CyberDefenseInstitute/CDIR
 
 ## Usage
 
+### Quick Start — Double-Click Launch
+
+The simplest way to use Washizukami is to **double-click `washi.exe`** in Explorer.
+
+No configuration needed. Just right-click → **Run as administrator**, and collection starts immediately with default settings:
+
+- Collects **all built-in artifacts**
+- Output folder: **`HOSTNAME\`** (created next to `washi.exe`)
+- Audit log: **`HOSTNAME\collection.log`** (with SHA-256 hashes)
+
+The console window stays open after collection completes so you can review the results. Press **Enter** to close it.
+
+For more control — filtering by category, specifying an output directory, generating a ZIP, etc. — use the CLI options described below.
+
+---
+
 ### Artifact Collection Mode (Default)
 
 ```
@@ -233,8 +249,6 @@ Below is the list of artifacts covered by the built-in definitions. You can also
 │       └── ...
 └── HOSTNAME.zip                ← ZIP archive (only when --zip is specified)
 ```
-
-> **Double-click launch:** Running `washi.exe` without arguments starts collection immediately with default settings (no ZIP). The console window stays open after completion so you can review the results — press Enter to close it.
 
 ### Audit Log Format
 
