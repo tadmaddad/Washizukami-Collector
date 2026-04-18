@@ -9,9 +9,11 @@ mod scan;
 mod ui;
 
 use anyhow::{Context, Result};
+use chrono::Local;
 use clap::{Parser, Subcommand};
 use collector::{collect_artifact, CollectionStatus, RawCollector};
 use config::CollectionFilter;
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -90,11 +92,16 @@ enum Commands {
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
-fn main() -> Result<()> {
+fn main() {
     // Detect double-click launch (no arguments passed by the user).
     let no_args = std::env::args_os().len() == 1;
 
-    let result = run(no_args);
+    if let Err(ref e) = run(no_args) {
+        eprintln!("\nError: {e:#}");
+        if no_args {
+            eprintln!("\n  Right-click washi.exe and select \"Run as administrator\".");
+        }
+    }
 
     // When launched without arguments (e.g. double-click), keep the window
     // open after completion so the user can read the output.
@@ -102,8 +109,6 @@ fn main() -> Result<()> {
         eprintln!("\nPress Enter to exit...");
         let _ = std::io::stdin().read_line(&mut String::new());
     }
-
-    result
 }
 
 fn run(no_args: bool) -> Result<()> {
@@ -145,9 +150,15 @@ fn run(no_args: bool) -> Result<()> {
         .and_then(|p| p.parent().map(|d| d.to_owned()))
         .unwrap_or_else(|| PathBuf::from("."));
 
+    // Build default output folder name: HOSTNAME_C_YYYYMMDDHHMMSS
+    // The drive letter reflects the source being collected (--volume override or C by default).
+    let drive_letter = cli.volume.unwrap_or('C').to_ascii_uppercase();
+    let timestamp = Local::now().format("%Y%m%d%H%M%S");
+    let default_folder = format!("{hostname}_{drive_letter}_{timestamp}");
+
     let output_base = cli
         .output
-        .unwrap_or_else(|| exe_dir.join(&hostname));
+        .unwrap_or_else(|| exe_dir.join(&default_folder));
 
     // ── Build CLI filter ─────────────────────────────────────────────────────
     let (include_cats, exclude_cats): (Vec<String>, Vec<String>) =
@@ -191,7 +202,7 @@ fn run(no_args: bool) -> Result<()> {
 
     // ── Dry-run path: resolve and print, then exit ───────────────────────────
     if cli.dry_run {
-        run_dry(&definitions);
+        run_dry(&definitions, cli.volume);
         return Ok(());
     }
 
@@ -224,26 +235,36 @@ fn run(no_args: bool) -> Result<()> {
     let mut current_cat: Option<String> = None;
     let mut cat_ok: usize = 0;
     let mut cat_skip: usize = 0;
-    let mut cat_fail: usize = 0;
     let mut cat_bytes: u64 = 0;
 
+    // Categories that had at least one failure — reported together at the end.
+    let mut failed_cats: Vec<String> = Vec::new();
+    let mut seen_failed: HashSet<String> = HashSet::new();
+
     for def in &definitions {
-        // ── Default mode: flush previous category line on category change ────
-        if !cli.verbose {
-            if current_cat.as_deref() != Some(def.category.as_str()) {
+        // ── Category change: flush previous line, print "Collecting…" ────────
+        let cat_changed = current_cat.as_deref() != Some(def.category.as_str());
+        if cat_changed {
+            if !cli.verbose {
+                // Flush previous category summary (only if something was collected).
                 if let Some(ref cat) = current_cat {
-                    ui::print_category_line(cat, cat_ok, cat_skip, cat_fail, cat_bytes);
+                    if cat_ok > 0 || cat_skip > 0 {
+                        ui::print_category_line(cat, cat_ok, cat_skip, cat_bytes);
+                    }
                 }
-                current_cat = Some(def.category.clone());
                 cat_ok = 0;
                 cat_skip = 0;
-                cat_fail = 0;
                 cat_bytes = 0;
             }
+            current_cat = Some(def.category.clone());
+            ui::print_collecting(&def.category);
         }
 
         // Expand environment variables and glob wildcards.
-        let resolved = match path_resolver::resolve_path(&def.target_path) {
+        // Apply volume override: replace the drive letter in the artifact path
+        // with the user-specified drive letter (e.g. --volume D turns C:\ into D:\).
+        let target_path = apply_volume_override(&def.target_path, cli.volume);
+        let resolved = match path_resolver::resolve_path(&target_path) {
             Ok(paths) => paths,
             Err(e) => {
                 if cli.verbose {
@@ -254,7 +275,9 @@ fn run(no_args: bool) -> Result<()> {
                 }
                 audit.log_warn(&format!("path resolution failed for '{}': {:#}", def.name, e));
                 n_fail += 1;
-                cat_fail += 1;
+                if seen_failed.insert(def.category.clone()) {
+                    failed_cats.push(def.category.clone());
+                }
                 continue;
             }
         };
@@ -264,10 +287,10 @@ fn run(no_args: bool) -> Result<()> {
                 ui::print_skip(
                     &def.category,
                     &def.name,
-                    &format!("no files matched '{}'", def.target_path),
+                    &format!("no files matched '{}'", target_path),
                 );
             }
-            audit.log_warn(&format!("no paths matched: {}", def.target_path));
+            audit.log_warn(&format!("no paths matched: {}", target_path));
             n_skip += 1;
             cat_skip += 1;
             continue;
@@ -314,7 +337,9 @@ fn run(no_args: bool) -> Result<()> {
                     }
                     audit.log_fail(&result);
                     n_fail += 1;
-                    cat_fail += 1;
+                    if seen_failed.insert(def.category.clone()) {
+                        failed_cats.push(def.category.clone());
+                    }
                 }
             }
         }
@@ -323,7 +348,9 @@ fn run(no_args: bool) -> Result<()> {
     // Flush the last category line (default mode).
     if !cli.verbose {
         if let Some(ref cat) = current_cat {
-            ui::print_category_line(cat, cat_ok, cat_skip, cat_fail, cat_bytes);
+            if cat_ok > 0 || cat_skip > 0 {
+                ui::print_category_line(cat, cat_ok, cat_skip, cat_bytes);
+            }
         }
     }
 
@@ -337,6 +364,11 @@ fn run(no_args: bool) -> Result<()> {
     );
     audit.log_summary(n_ok, n_skip, n_fail);
 
+    // ── Per-category failure warning ─────────────────────────────────────────
+    if !failed_cats.is_empty() {
+        ui::print_collection_warnings(&failed_cats, &output_base.join("collection.log"));
+    }
+
     // ── ZIP archive ──────────────────────────────────────────────────────────
     if cli.zip {
         let zip_path = create_zip(&output_base)
@@ -349,13 +381,14 @@ fn run(no_args: bool) -> Result<()> {
 
 // ── Dry-run ───────────────────────────────────────────────────────────────────
 
-fn run_dry(definitions: &[config::ArtifactDefinition]) {
+fn run_dry(definitions: &[config::ArtifactDefinition], volume: Option<char>) {
     let mut total_paths: usize = 0;
     let mut total_bytes: u64 = 0;
     let mut unknown_size_count: usize = 0;
 
     for def in definitions {
-        let resolved = match path_resolver::resolve_path(&def.target_path) {
+        let target_path = apply_volume_override(&def.target_path, volume);
+        let resolved = match path_resolver::resolve_path(&target_path) {
             Ok(p) => p,
             Err(e) => {
                 ui::print_warn(&format!("path resolution failed for '{}': {:#}", def.name, e));
@@ -364,7 +397,7 @@ fn run_dry(definitions: &[config::ArtifactDefinition]) {
         };
 
         if resolved.is_empty() {
-            ui::print_dry_no_match(&def.category, &def.name, &def.target_path);
+            ui::print_dry_no_match(&def.category, &def.name, &target_path);
         } else {
             for path in &resolved {
                 let size_str = match std::fs::metadata(path) {
@@ -385,6 +418,26 @@ fn run_dry(definitions: &[config::ArtifactDefinition]) {
     }
 
     ui::print_dry_summary(definitions.len(), total_paths, total_bytes, unknown_size_count);
+}
+
+// ── Volume override ───────────────────────────────────────────────────────────
+
+/// Replace the drive letter in a Windows-style path with `drive`.
+///
+/// `"C:\\Windows\\System32"` with `Some('D')` → `"D:\\Windows\\System32"`.
+/// Paths that have no leading `X:` prefix, or when `drive` is `None`,
+/// are returned unchanged.
+fn apply_volume_override(path: &str, drive: Option<char>) -> String {
+    let d = match drive {
+        Some(c) => c.to_ascii_uppercase(),
+        None => return path.to_owned(),
+    };
+    let b = path.as_bytes();
+    if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
+        format!("{}:{}", d, &path[2..])
+    } else {
+        path.to_owned()
+    }
 }
 
 // ── ZIP archive ───────────────────────────────────────────────────────────────

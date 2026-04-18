@@ -104,48 +104,57 @@ pub fn confirm(prompt: &str) -> bool {
     matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
+// ── In-progress indicator ─────────────────────────────────────────────────────
+
+/// Print a "now collecting" line at the start of each category.
+pub fn print_collecting(category: &str) {
+    println!("  {}  Collecting {}…", "❯".yellow(), category.bold());
+}
+
 // ── Category-level summary row (default mode) ────────────────────────────────
 
 /// Print a single aggregated row for one category (default non-verbose output).
 ///
-/// Icon and colour reflect the worst outcome in the category:
-/// - any failure  → ✖ red
-/// - any skip     → ⚠ yellow
-/// - all ok       → ✔ green
-pub fn print_category_line(
-    category: &str,
-    n_ok: usize,
-    n_skip: usize,
-    n_fail: usize,
-    bytes: u64,
-) {
-    let (icon, label) = if n_fail > 0 {
-        ("✖".red().to_string(), category.red().to_string())
-    } else if n_skip > 0 {
+/// Failures are not shown here — they are deferred to `print_collection_warnings`.
+/// Icon and colour reflect only success vs. skip:
+/// - any skip  → ⚠ yellow
+/// - all ok    → ✔ green
+///
+/// Only call this when `n_ok + n_skip > 0`; categories with only failures are
+/// omitted from the per-category output and appear in the end-of-run warning.
+pub fn print_category_line(category: &str, n_ok: usize, n_skip: usize, bytes: u64) {
+    let (icon, label) = if n_skip > 0 {
         ("⚠".yellow().to_string(), category.yellow().to_string())
     } else {
         ("✔".green().to_string(), category.to_string())
     };
 
-    let total = n_ok + n_skip + n_fail;
-    let mut parts: Vec<String> = vec![
-        format!("{total} file(s)"),
-    ];
+    let total = n_ok + n_skip;
+    let mut parts: Vec<String> = vec![format!("{total} file(s)")];
     if bytes > 0 {
         parts.push(format_size(bytes));
     }
     if n_skip > 0 {
         parts.push(format!("{} skipped", n_skip.to_string().yellow()));
     }
-    if n_fail > 0 {
-        parts.push(format!("{} failed", n_fail.to_string().red()));
-    }
 
+    println!("  {}  {:<12}  {}", icon, label, parts.join("  ·  "));
+}
+
+// ── End-of-run failure warning ────────────────────────────────────────────────
+
+/// Print a warning listing every category that had at least one failure.
+/// Call this after `print_summary` when `failed_categories` is non-empty.
+pub fn print_collection_warnings(failed_categories: &[String], log_path: &Path) {
+    let cats = failed_categories.join(", ");
     println!(
-        "  {}  {:<12}  {}",
-        icon,
-        label,
-        parts.join("  ·  "),
+        "\n  {}  Some {} artifact(s) could not be collected.",
+        "⚠".yellow(),
+        cats.yellow().bold(),
+    );
+    println!(
+        "     Check {} for details.",
+        log_path.display().to_string().dimmed(),
     );
 }
 

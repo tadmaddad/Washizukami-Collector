@@ -72,8 +72,8 @@ The simplest way to use Washizukami is to **double-click `washi.exe`** in Explor
 No configuration needed. Just right-click → **Run as administrator**, and collection starts immediately with default settings:
 
 - Collects **all built-in artifacts**
-- Output folder: **`HOSTNAME\`** (created next to `washi.exe`)
-- Audit log: **`HOSTNAME\collection.log`** (with SHA-256 hashes)
+- Output folder: **`HOSTNAME_C_YYYYMMDDHHMMSS\`** (created next to `washi.exe`)
+- Audit log: **`HOSTNAME_C_YYYYMMDDHHMMSS\collection.log`** (with SHA-256 hashes)
 
 The console window stays open after collection completes so you can review the results. Press **Enter** to close it.
 
@@ -88,7 +88,7 @@ washi.exe [OPTIONS]
 
 Options:
   -o, --output <DIR>               Output directory
-                                   [Default: <executable folder>\<COMPUTERNAME>]
+                                   [Default: <executable folder>\<COMPUTERNAME>_<C>_<YYYYMMDDHHMMSS>]
   -c, --category <CATEGORY>        Filter by category (repeatable, case-insensitive).
                                    Without prefix: collect only these categories.
                                    With '!' prefix: exclude these categories.
@@ -96,7 +96,10 @@ Options:
       --dry-run                    Display path resolution results only (no files are collected)
       --zip                        Generate a ZIP archive after collection
       --mem                        Capture memory dump with tools\winpmem*.exe (runs before collection)
-      --volume <LETTER>            Override the drive letter for NTFS Raw Read
+      --volume <LETTER>            Override the source drive letter for all artifact collection.
+                                   Useful when running washi.exe from a USB drive (e.g., D:) and
+                                   targeting the system drive (C:) — default behavior collects from C:.
+                                   Use --volume D to collect artifacts from D: instead.
   -v, --verbose                    Show every collected file instead of one summary line per category
   -h, --help
   -V, --version
@@ -190,6 +193,9 @@ washi.exe --dry-run
 # Specify output directory
 washi.exe --output D:\evidence\case001 --zip
 
+# Collect from a different drive (e.g., forensic target mounted as D:)
+washi.exe --volume D --output E:\evidence\case001
+
 # YARA scan (scan persistence paths and collect detected files into infected.zip)
 washi.exe scan --rules C:\rules\malware.yar --output C:\scan_out
 ```
@@ -208,7 +214,7 @@ Below is the list of artifacts covered by the built-in definitions. You can also
 | **Registry** | NTUSER.DAT / UsrClass.dat (all users) | NTFS |
 | **NTFS** | `$MFT` (Master File Table) | NTFS |
 | **NTFS** | `$SECURE:$SDS` (Security Descriptor Stream) | NTFS + ADS |
-| **NTFS** | `$UsnJrnl:$J` (USN Journal) | NTFS + ADS |
+| **NTFS** | `$UsnJrnl:$J` (USN Journal) — only allocated extents are collected; sparse leading region is skipped | NTFS + ADS |
 | **Filesystem** | Prefetch files (`Prefetch\*.pf`) | File |
 | **Filesystem** | Recent files (`Recent\*.lnk`) | File |
 | **WMI** | WMI Repository (OBJECTS.DATA / INDEX.BTR / MAPPING*.MAP) | NTFS |
@@ -226,7 +232,7 @@ Below is the list of artifacts covered by the built-in definitions. You can also
 
 ```
 <executable folder>\
-├── HOSTNAME\                   ← Output folder (created next to washi.exe)
+├── HOSTNAME_C_YYYYMMDDHHMMSS\  ← Output folder (created next to washi.exe)
 │   ├── collection.log          ← Audit log (timestamps, SHA-256, collection method)
 │   ├── memory.dmp              ← Memory dump (only when --mem is specified)
 │   ├── EventLogs\
@@ -247,16 +253,16 @@ Below is the list of artifacts covered by the built-in definitions. You can also
 │   │   └── SRUDB.dat
 │   └── Web\
 │       └── ...
-└── HOSTNAME.zip                ← ZIP archive (only when --zip is specified)
+└── HOSTNAME_C_YYYYMMDDHHMMSS.zip ← ZIP archive (only when --zip is specified)
 ```
 
 ### Audit Log Format
 
 ```
-[2026-03-21T10:30:00+0900] [OK   ] [NTFS        ] C:\Windows\System32\config\SAM -> output\HOSTNAME\Registry\SAM (262144 bytes, SHA256: abcd1234...)
+[2026-03-21T10:30:00+0900] [OK   ] [NTFS        ] C:\Windows\System32\config\SAM -> HOSTNAME_C_20260418120000\Registry\SAM (262144 bytes, SHA256: abcd1234...)
 [2026-03-21T10:30:01+0900] [SKIP ] [-           ] C:\path\missing — file not found
 [2026-03-21T10:30:02+0900] [FAIL ] [-           ] C:\path\locked — <error>
-[2026-03-21T10:30:03+0900] [TOOL ] [winpmem_x64 ] Starting: tools\winpmem_x64.exe -> output\HOSTNAME\memory.dmp
+[2026-03-21T10:30:03+0900] [TOOL ] [winpmem_x64 ] Starting: tools\winpmem_x64.exe -> HOSTNAME_C_20260418120000\memory.dmp
 [2026-03-21T10:30:10+0900] [INFO ] [-           ] Complete — OK: 141  Skipped: 1  Failed: 0
 
 # When running washi.exe scan
@@ -448,6 +454,18 @@ The following are planned as future built-in definitions:
 | **Mozilla Thunderbird** | Mailboxes (`*.msf` / `INBOX`), address books, configuration files |
 
 Since email data tends to be large, optimizations such as date-range filtering and differential collection are also being considered.
+
+---
+
+## Bug Fixes
+
+### v0.6.1 — `$UsnJrnl:$J` sparse file over-collection
+
+**Symptom:** The collected `$UsnJrnl:$J` was as large as the journal's full logical size (10 GB+) rather than the actual records size.
+
+**Root cause:** `$UsnJrnl:$J` is a sparse file. Windows manages the USN Journal as a circular buffer: older records are deallocated, leaving a large sparse region (virtual zeros with no on-disk storage) at the beginning, and only the tail contains actual USN records. The previous implementation read the entire logical stream including sparse regions, which the ntfs crate fills with zeros, producing a file equal to the journal's maximum logical size.
+
+**Fix:** `NtfsNonResidentAttributeValue::data_runs()` is now iterated directly. Sparse data runs (where `data_position()` returns `None`) are skipped without writing zeros. Only the allocated extents are written to the output file.
 
 ---
 

@@ -5,6 +5,7 @@
 /// would prevent normal `std::fs` access to in-use files such as the registry
 /// hives or the Security event log.
 use anyhow::{bail, Context, Result};
+use ntfs::attribute_value::NtfsAttributeValue;
 use ntfs::indexes::NtfsFileNameIndex;
 use ntfs::{Ntfs, NtfsFile, NtfsReadSeek};
 use sha2::{Digest, Sha256};
@@ -320,6 +321,12 @@ where
 /// Copy the named `$DATA` stream of `file` into `writer`, computing SHA-256
 /// in the same pass.
 ///
+/// For non-resident attributes (including `$UsnJrnl:$J`), data runs are
+/// iterated directly. **Sparse runs are skipped** — their virtual zero bytes
+/// are not written to the output file. This prevents the USN Journal problem
+/// where the 34 MB of actual records would otherwise be padded out to the
+/// journal's full logical size (often 10 GB+).
+///
 /// Returns `(bytes_written, sha256_hex)`.
 fn copy_data<'n, T, W>(
     _ntfs: &'n Ntfs,
@@ -347,7 +354,9 @@ where
         .to_attribute()
         .context("failed to get $DATA attribute")?;
 
-    let mut data_value = data_attribute
+    // `value()` reads attribute header info already cached in the MFT record
+    // and releases `source` immediately upon return.
+    let data_value = data_attribute
         .value(source)
         .context("failed to get $DATA value")?;
 
@@ -355,16 +364,113 @@ where
     let mut buf = vec![0u8; 65_536];
     let mut total: u64 = 0;
 
-    loop {
-        let n = data_value
-            .read(source, &mut buf)
-            .context("error reading file data from volume")?;
-        if n == 0 {
-            break;
+    // Typical NTFS cluster size — used as the seek granularity when skipping
+    // sparse runs in the AttributeListNonResident path.
+    const CLUSTER: u64 = 4_096;
+
+    match data_value {
+        NtfsAttributeValue::NonResident(non_resident) => {
+            // Iterate data runs manually so we can skip sparse runs.
+            // The logical stream size (len) accounts for sparse gaps; the
+            // allocated_size of each run is the on-disk cluster size.
+            let mut bytes_remaining = non_resident.len();
+
+            for run_result in non_resident.data_runs() {
+                if bytes_remaining == 0 {
+                    break;
+                }
+                let run = run_result.context("error reading NTFS data run")?;
+
+                // How many bytes of this run fall within the logical data?
+                let run_bytes = run.allocated_size().min(bytes_remaining);
+
+                if let Some(fs_pos) = run.data_position().value() {
+                    // Non-sparse run: read directly from the volume at the
+                    // cluster's on-disk position (LCN × cluster_size).
+                    source
+                        .seek(SeekFrom::Start(fs_pos.get()))
+                        .context("seek to data run failed")?;
+
+                    let mut run_remaining = run_bytes;
+                    while run_remaining > 0 {
+                        let to_read = buf.len().min(run_remaining as usize);
+                        let n = source
+                            .read(&mut buf[..to_read])
+                            .context("read from data run failed")?;
+                        if n == 0 {
+                            break;
+                        }
+                        hasher.update(&buf[..n]);
+                        writer.write_all(&buf[..n]).context("write error")?;
+                        total += n as u64;
+                        run_remaining -= n as u64;
+                    }
+                }
+                // Sparse run → no on-disk clusters; skip without writing zeros.
+
+                bytes_remaining = bytes_remaining.saturating_sub(run.allocated_size());
+            }
         }
-        hasher.update(&buf[..n]);
-        writer.write_all(&buf[..n]).context("write error")?;
-        total += n as u64;
+
+        NtfsAttributeValue::AttributeListNonResident(mut attr_list_nr) => {
+            // Data runs span multiple MFT records (connected attributes).
+            // We cannot call data_runs() directly on this type, so we use
+            // data_position() checked BEFORE each read with a cluster-sized
+            // (4 KiB) buffer to minimise boundary error.
+            //
+            // Why not seek() to skip sparse regions?
+            // The ntfs 0.4 seek implementation exits its while loop when
+            //   bytes_left_to_seek == data_run.remaining_len()
+            // without calling next_data_run(), leaving stream_data_run
+            // pointing at the exhausted sparse run.  Subsequent calls to
+            // data_position() keep returning None even though the logical
+            // stream position has moved into allocated territory, so the
+            // allocated region is never read.
+            //
+            // The safe workaround: always use read() to advance the stream.
+            // For sparse runs the ntfs crate calls fill(0) without any disk
+            // I/O, so iterating a 10 GB sparse region costs only ~2.5 M
+            // in-memory zero-fill operations — no device reads.
+            //
+            // Error bound: at each sparse↔allocated boundary, at most one
+            // 4 KiB buffer is misclassified.  With N boundary crossings the
+            // total error is ≤ N × 4 KiB, far smaller than the 64 KiB
+            // per-buffer error produced by the 65536-byte approaches.
+            let mut small_buf = vec![0u8; CLUSTER as usize];
+
+            loop {
+                // Sample position BEFORE the read.
+                let is_allocated = attr_list_nr.data_position().value().is_some();
+                let n = attr_list_nr
+                    .read(source, &mut small_buf)
+                    .context("read error in AttributeListNonResident")?;
+                if n == 0 {
+                    break;
+                }
+                if is_allocated {
+                    hasher.update(&small_buf[..n]);
+                    writer.write_all(&small_buf[..n]).context("write error")?;
+                    total += n as u64;
+                }
+                // Sparse: the read advanced our position without disk I/O;
+                // discard the zero-filled buffer and continue.
+            }
+        }
+
+        mut other => {
+            // Resident: always fully allocated — read normally with the large buffer.
+            loop {
+                let n = other
+                    .read(source, &mut buf)
+                    .context("error reading file data from volume")?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buf[..n]);
+                writer.write_all(&buf[..n]).context("write error")?;
+                total += n as u64;
+            }
+        }
     }
 
     Ok((total, hex_string(&hasher.finalize())))
